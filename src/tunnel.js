@@ -90,14 +90,7 @@ export function createLogSink(path, { truncate = false } = {}) {
   }
 }
 
-export function startTunnel(localPort, {
-  timeoutMs = 30000,
-  logPath = null,
-  bin = findCloudflared(),
-  spawnFn = spawn,
-} = {}) {
-  if (!bin) return Promise.reject(new Error(installHint()))
-
+function attemptTunnel(localPort, { timeoutMs, bin, spawnFn, sink }) {
   return new Promise((resolve, reject) => {
     // --protocol http2 强制走 TCP。cloudflared 默认使用 QUIC/UDP 7844，
     // 该端口在中国大陆网络下干扰明显，隧道会反复重连。
@@ -108,19 +101,14 @@ export function startTunnel(localPort, {
       '--url', `http://127.0.0.1:${localPort}`,
     ], { stdio: ['ignore', 'pipe', 'pipe'] })
 
-    const sink = createLogSink(logPath, { truncate: true })
     let settled = false
     let buf = ''
-
-    const seeLog = logPath ? ` See ${logPath} for cloudflared output.` : ''
 
     const timer = setTimeout(() => {
       if (settled) return
       settled = true
       killTree(child.pid)
-      reject(new Error(
-        `cloudflared did not establish a tunnel connection within ${timeoutMs}ms.${seeLog}`,
-      ))
+      reject(new Error(`cloudflared did not establish a tunnel connection within ${timeoutMs}ms`))
     }, timeoutMs)
 
     const onData = (d) => {
@@ -150,7 +138,39 @@ export function startTunnel(localPort, {
       if (settled) return
       settled = true
       clearTimeout(timer)
-      reject(new Error(`cloudflared exited with code ${code} before producing a url.${seeLog}`))
+      reject(new Error(`cloudflared exited with code ${code} before producing a url`))
     })
   })
+}
+
+export async function startTunnel(localPort, {
+  timeoutMs = 30000,
+  logPath = null,
+  bin = findCloudflared(),
+  spawnFn = spawn,
+  tries = 4,
+  retryDelayMs = 2000,
+} = {}) {
+  if (!bin) throw new Error(installHint())
+
+  // Truncate once per call, not once per attempt: the failures that led up to
+  // the last try are the whole reason the log exists.
+  const sink = createLogSink(logPath, { truncate: true })
+  const seeLog = logPath ? ` See ${logPath} for cloudflared output.` : ''
+  let last = null
+
+  for (let n = 1; n <= tries; n += 1) {
+    sink.write(`--- attempt ${n}/${tries} ---\n`)
+    try {
+      return await attemptTunnel(localPort, { timeoutMs, bin, spawnFn, sink })
+    } catch (err) {
+      last = err
+      if (n < tries) await new Promise((r) => setTimeout(r, retryDelayMs))
+    }
+  }
+
+  const plural = tries === 1 ? 'attempt' : 'attempts'
+  throw new Error(
+    `cloudflared failed to establish a tunnel after ${tries} ${plural}: ${last?.message || last}.${seeLog}`,
+  )
 }

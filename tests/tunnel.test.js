@@ -100,6 +100,7 @@ test('startTunnel starts each session with a fresh log', async () => {
     bin: 'fake-cloudflared',
     spawnFn: fakeSpawn(dir, FAKE_CLOUDFLARED),
     logPath,
+    retryDelayMs: 0,
   })
 
   try {
@@ -112,7 +113,123 @@ test('startTunnel starts each session with a fresh log', async () => {
   }
 })
 
-test('startTunnel points at the log file when it gives up waiting', async () => {
+// 前两次退出码 1，第三次才成功。计数落在文件里，因为每次尝试都是新进程。
+const FLAKY_CLOUDFLARED = `
+const { readFileSync, writeFileSync, existsSync } = require('node:fs')
+const counter = process.env.MP_TEST_COUNTER
+const n = (existsSync(counter) ? Number(readFileSync(counter, 'utf8')) : 0) + 1
+writeFileSync(counter, String(n))
+if (n <= 2) {
+  process.stderr.write('ERR failed to request quick Tunnel: context deadline exceeded\\n')
+  process.exit(1)
+}
+process.stderr.write('INF |  https://fake-tunnel-under-test.trycloudflare.com  |\\n')
+process.stderr.write('INF Registered tunnel connection connIndex=0\\n')
+setInterval(() => {}, 1000)
+`
+
+const ALWAYS_FAILS = `
+process.stderr.write('ERR failed to request quick Tunnel\\n')
+process.exit(1)
+`
+
+test('startTunnel 重试到成功为止', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'mp-tunnel-'))
+  const logPath = join(dir, 'cloudflared.log')
+  process.env.MP_TEST_COUNTER = join(dir, 'counter')
+
+  const t = await startTunnel(1234, {
+    bin: 'fake-cloudflared',
+    spawnFn: fakeSpawn(dir, FLAKY_CLOUDFLARED),
+    logPath,
+    retryDelayMs: 0,
+  })
+
+  try {
+    assert.equal(t.url, 'https://fake-tunnel-under-test.trycloudflare.com')
+    assert.equal(readFileSync(join(dir, 'counter'), 'utf8'), '3', '应当正好尝试三次')
+  } finally {
+    process.kill(t.pid)
+    delete process.env.MP_TEST_COUNTER
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('重试之间不截断日志——失败现场才是最该留下的', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'mp-tunnel-'))
+  const logPath = join(dir, 'cloudflared.log')
+  process.env.MP_TEST_COUNTER = join(dir, 'counter')
+
+  const t = await startTunnel(1234, {
+    bin: 'fake-cloudflared',
+    spawnFn: fakeSpawn(dir, FLAKY_CLOUDFLARED),
+    logPath,
+    retryDelayMs: 0,
+  })
+
+  try {
+    const log = readFileSync(logPath, 'utf8')
+    assert.match(log, /attempt 1\/4/)
+    assert.match(log, /attempt 2\/4/)
+    assert.match(log, /attempt 3\/4/)
+    assert.equal(
+      (log.match(/failed to request quick Tunnel/g) || []).length, 2,
+      '前两次的失败输出必须都还在',
+    )
+    assert.match(log, /Registered tunnel connection/)
+  } finally {
+    process.kill(t.pid)
+    delete process.env.MP_TEST_COUNTER
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('首次即成功时不产生多余尝试', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'mp-tunnel-'))
+  const logPath = join(dir, 'cloudflared.log')
+
+  const t = await startTunnel(1234, {
+    bin: 'fake-cloudflared',
+    spawnFn: fakeSpawn(dir, FAKE_CLOUDFLARED),
+    logPath,
+    retryDelayMs: 0,
+  })
+
+  try {
+    const log = readFileSync(logPath, 'utf8')
+    assert.match(log, /attempt 1\/4/)
+    assert.doesNotMatch(log, /attempt 2\/4/)
+  } finally {
+    process.kill(t.pid)
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('全部尝试失败时报出次数、原因与日志路径', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'mp-tunnel-'))
+  const logPath = join(dir, 'cloudflared.log')
+
+  await assert.rejects(
+    startTunnel(1234, {
+      bin: 'fake-cloudflared',
+      spawnFn: fakeSpawn(dir, ALWAYS_FAILS),
+      logPath,
+      tries: 3,
+      retryDelayMs: 0,
+    }),
+    (err) => {
+      assert.match(err.message, /after 3 attempts/)
+      assert.match(err.message, /exited with code 1/)
+      assert.ok(err.message.includes(logPath), `expected message to name ${logPath}, got: ${err.message}`)
+      return true
+    },
+  )
+
+  assert.match(readFileSync(logPath, 'utf8'), /attempt 3\/3/)
+  rmSync(dir, { recursive: true, force: true })
+})
+
+test('startTunnel 放弃等待时指向日志文件', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'mp-tunnel-'))
   const logPath = join(dir, 'cloudflared.log')
   const silent = "process.stderr.write('INF starting up\\n'); setInterval(() => {}, 1000)"
@@ -123,6 +240,8 @@ test('startTunnel points at the log file when it gives up waiting', async () => 
       spawnFn: fakeSpawn(dir, silent),
       logPath,
       timeoutMs: 300,
+      tries: 1,
+      retryDelayMs: 0,
     }),
     (err) => {
       assert.match(err.message, /did not establish a tunnel connection/)

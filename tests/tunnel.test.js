@@ -4,7 +4,16 @@ import { spawn } from 'node:child_process'
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { createLogSink, parseTunnelReady, parseTunnelUrl, startTunnel } from '../src/tunnel.js'
+import {
+  createLogSink,
+  establishBudgetMs,
+  isAlive,
+  parseTunnelReady,
+  parseTunnelUrl,
+  startTunnel,
+  TUNNEL_DEFAULTS,
+} from '../src/tunnel.js'
+import { tunnelWaitBudgetMs } from '../src/cli.js'
 
 test('extracts the tunnel url from a cloudflared banner line', () => {
   const line = '2026-08-05T12:00:00Z INF |  https://tidy-pear-lion-nine.trycloudflare.com  |'
@@ -136,20 +145,24 @@ process.exit(1)
 test('startTunnel 重试到成功为止', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'mp-tunnel-'))
   const logPath = join(dir, 'cloudflared.log')
-  process.env.MP_TEST_COUNTER = join(dir, 'counter')
-
-  const t = await startTunnel(1234, {
-    bin: 'fake-cloudflared',
-    spawnFn: fakeSpawn(dir, FLAKY_CLOUDFLARED),
-    logPath,
-    retryDelayMs: 0,
-  })
 
   try {
-    assert.equal(t.url, 'https://fake-tunnel-under-test.trycloudflare.com')
-    assert.equal(readFileSync(join(dir, 'counter'), 'utf8'), '3', '应当正好尝试三次')
+    process.env.MP_TEST_COUNTER = join(dir, 'counter')
+
+    const t = await startTunnel(1234, {
+      bin: 'fake-cloudflared',
+      spawnFn: fakeSpawn(dir, FLAKY_CLOUDFLARED),
+      logPath,
+      retryDelayMs: 0,
+    })
+
+    try {
+      assert.equal(t.url, 'https://fake-tunnel-under-test.trycloudflare.com')
+      assert.equal(readFileSync(join(dir, 'counter'), 'utf8'), '3', '应当正好尝试三次')
+    } finally {
+      process.kill(t.pid)
+    }
   } finally {
-    process.kill(t.pid)
     delete process.env.MP_TEST_COUNTER
     rmSync(dir, { recursive: true, force: true })
   }
@@ -158,27 +171,31 @@ test('startTunnel 重试到成功为止', async () => {
 test('重试之间不截断日志——失败现场才是最该留下的', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'mp-tunnel-'))
   const logPath = join(dir, 'cloudflared.log')
-  process.env.MP_TEST_COUNTER = join(dir, 'counter')
-
-  const t = await startTunnel(1234, {
-    bin: 'fake-cloudflared',
-    spawnFn: fakeSpawn(dir, FLAKY_CLOUDFLARED),
-    logPath,
-    retryDelayMs: 0,
-  })
 
   try {
-    const log = readFileSync(logPath, 'utf8')
-    assert.match(log, /attempt 1\/4/)
-    assert.match(log, /attempt 2\/4/)
-    assert.match(log, /attempt 3\/4/)
-    assert.equal(
-      (log.match(/failed to request quick Tunnel/g) || []).length, 2,
-      '前两次的失败输出必须都还在',
-    )
-    assert.match(log, /Registered tunnel connection/)
+    process.env.MP_TEST_COUNTER = join(dir, 'counter')
+
+    const t = await startTunnel(1234, {
+      bin: 'fake-cloudflared',
+      spawnFn: fakeSpawn(dir, FLAKY_CLOUDFLARED),
+      logPath,
+      retryDelayMs: 0,
+    })
+
+    try {
+      const log = readFileSync(logPath, 'utf8')
+      assert.match(log, /attempt 1\/4/)
+      assert.match(log, /attempt 2\/4/)
+      assert.match(log, /attempt 3\/4/)
+      assert.equal(
+        (log.match(/failed to request quick Tunnel/g) || []).length, 2,
+        '前两次的失败输出必须都还在',
+      )
+      assert.match(log, /Registered tunnel connection/)
+    } finally {
+      process.kill(t.pid)
+    }
   } finally {
-    process.kill(t.pid)
     delete process.env.MP_TEST_COUNTER
     rmSync(dir, { recursive: true, force: true })
   }
@@ -252,4 +269,90 @@ test('startTunnel 放弃等待时指向日志文件', async () => {
 
   assert.match(readFileSync(logPath, 'utf8'), /starting up/)
   rmSync(dir, { recursive: true, force: true })
+})
+
+test('establishBudgetMs 用默认配置算出最坏情况的墙钟时间', () => {
+  const { tries, timeoutMs, retryDelayMs } = TUNNEL_DEFAULTS
+  assert.equal(establishBudgetMs(), tries * timeoutMs + (tries - 1) * retryDelayMs)
+})
+
+test('establishBudgetMs 支持逐项覆盖参数', () => {
+  const opts = { tries: 5, timeoutMs: 1_000, retryDelayMs: 500 }
+  assert.equal(establishBudgetMs(opts), opts.tries * opts.timeoutMs + (opts.tries - 1) * opts.retryDelayMs)
+})
+
+test('establishBudgetMs 在 tries: 1 时不叠加重试间隔', () => {
+  assert.equal(establishBudgetMs({ tries: 1 }), TUNNEL_DEFAULTS.timeoutMs)
+  // retryDelayMs must be irrelevant here — a single try has no gap to wait out.
+  assert.equal(establishBudgetMs({ tries: 1, retryDelayMs: 999_999 }), TUNNEL_DEFAULTS.timeoutMs)
+})
+
+// The two numbers (CLI wait, startTunnel's retry budget) were specified
+// independently in H4 and drifted apart. Assert the relationship, not a
+// magic number, so a future change to the retry policy cannot silently
+// desynchronize them again.
+test('CLI 等待隧道的时限严格大于 startTunnel 的重试预算', () => {
+  assert.ok(
+    tunnelWaitBudgetMs() > establishBudgetMs(),
+    `expected CLI wait (${tunnelWaitBudgetMs()}) to exceed the retry budget (${establishBudgetMs()})`,
+  )
+})
+
+// The stub for this test never emits the ready lines on its first spawn — it
+// only reports success starting with the second — so the first attempt can
+// only resolve via the timeoutMs branch. It records its own pid to disk
+// (keyed by attempt number, alongside MP_TEST_COUNTER) so the test can check
+// afterwards whether that first child is still running.
+const TIMES_OUT_ONCE_THEN_SUCCEEDS = `
+const { readFileSync, writeFileSync, existsSync } = require('node:fs')
+const counter = process.env.MP_TEST_COUNTER
+const n = (existsSync(counter) ? Number(readFileSync(counter, 'utf8')) : 0) + 1
+writeFileSync(counter, String(n))
+writeFileSync(counter + '.pid.' + n, String(process.pid))
+if (n === 1) {
+  process.stderr.write('INF starting up, attempt ' + n + '\\n')
+  setInterval(() => {}, 1000)
+} else {
+  process.stderr.write('INF |  https://fake-tunnel-under-test.trycloudflare.com  |\\n')
+  process.stderr.write('INF Registered tunnel connection connIndex=0\\n')
+  setInterval(() => {}, 1000)
+}
+`
+
+test('超时触发的重试会回收上一次尝试的子进程，不留活体 (Finding 2)', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'mp-tunnel-'))
+  const logPath = join(dir, 'cloudflared.log')
+  const counterPath = join(dir, 'counter')
+
+  try {
+    process.env.MP_TEST_COUNTER = counterPath
+
+    const t = await startTunnel(1234, {
+      bin: 'fake-cloudflared',
+      spawnFn: fakeSpawn(dir, TIMES_OUT_ONCE_THEN_SUCCEEDS),
+      logPath,
+      timeoutMs: 300,
+      tries: 2,
+      retryDelayMs: 0,
+    })
+
+    try {
+      assert.equal(t.url, 'https://fake-tunnel-under-test.trycloudflare.com')
+      assert.equal(readFileSync(counterPath, 'utf8'), '2', '第一次必须超时，第二次才应当发生')
+
+      const log = readFileSync(logPath, 'utf8')
+      assert.match(log, /attempt 1\/2/, '第一次尝试必须真的跑过')
+      assert.match(log, /attempt 2\/2/, '第二次尝试必须真的跑过')
+      assert.match(log, /starting up/, '第一次尝试的输出必须留痕，证明它不是被跳过的')
+
+      const firstPid = Number(readFileSync(`${counterPath}.pid.1`, 'utf8'))
+      assert.notEqual(firstPid, t.pid, '两次尝试必须是不同的子进程')
+      assert.equal(isAlive(firstPid), false, '超时的第一次尝试必须被 killTree 回收，不能残留')
+    } finally {
+      process.kill(t.pid)
+    }
+  } finally {
+    delete process.env.MP_TEST_COUNTER
+    rmSync(dir, { recursive: true, force: true })
+  }
 })

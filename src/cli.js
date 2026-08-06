@@ -4,6 +4,13 @@ import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import * as state from './state.js'
 import { cleanupAll, cleanupLegacy, cleanupStale, previewHealth } from './daemon.js'
+import { establishBudgetMs } from './tunnel.js'
+
+// Covers daemon process startup, the proxy's listen() before it even calls
+// startTunnel, and the final state-file write — none of which are part of
+// startTunnel's own retry budget but all of which happen before the CLI can
+// see a result.
+const DAEMON_STARTUP_SLACK_MS = 10_000
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 
@@ -149,7 +156,13 @@ function portIsOpen(port) {
   })
 }
 
-async function waitForState(port, predicate, timeoutMs = 40_000) {
+// The CLI's wait for the tunnel, derived from startTunnel's own retry budget
+// plus slack rather than a constant of its own — see DAEMON_STARTUP_SLACK_MS.
+export function tunnelWaitBudgetMs() {
+  return establishBudgetMs() + DAEMON_STARTUP_SLACK_MS
+}
+
+async function waitForState(port, predicate, timeoutMs = tunnelWaitBudgetMs()) {
   const deadline = Date.now() + timeoutMs
   while (Date.now() < deadline) {
     const s = state.read(port)

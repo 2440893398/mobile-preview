@@ -131,6 +131,7 @@ function attemptTunnel(localPort, { timeoutMs, bin, spawnFn, sink }) {
       if (settled) return
       settled = true
       clearTimeout(timer)
+      killTree(child.pid)
       reject(err)
     })
 
@@ -143,13 +144,23 @@ function attemptTunnel(localPort, { timeoutMs, bin, spawnFn, sink }) {
   })
 }
 
+export const TUNNEL_DEFAULTS = { timeoutMs: 30_000, tries: 4, retryDelayMs: 2_000 }
+
+// Worst case wall-clock for startTunnel to exhaust its retries. The CLI waits
+// on this rather than a constant of its own: two numbers that must agree will
+// eventually disagree.
+export function establishBudgetMs(opts = {}) {
+  const { timeoutMs, tries, retryDelayMs } = { ...TUNNEL_DEFAULTS, ...opts }
+  return tries * timeoutMs + Math.max(0, tries - 1) * retryDelayMs
+}
+
 export async function startTunnel(localPort, {
-  timeoutMs = 30000,
+  timeoutMs = TUNNEL_DEFAULTS.timeoutMs,
   logPath = null,
   bin = findCloudflared(),
   spawnFn = spawn,
-  tries = 4,
-  retryDelayMs = 2000,
+  tries = TUNNEL_DEFAULTS.tries,
+  retryDelayMs = TUNNEL_DEFAULTS.retryDelayMs,
 } = {}) {
   if (!bin) throw new Error(installHint())
 

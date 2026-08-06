@@ -73,7 +73,7 @@ test('correct token sets an HttpOnly cookie and redirects to the clean path', as
   assert.match(cookie, /Secure/)
 })
 
-async function proxyWith(overrides) {
+async function proxyWith(t, overrides) {
   const token = mintToken()
   const server = createProxy({
     galleryDir,
@@ -85,11 +85,12 @@ async function proxyWith(overrides) {
     ...overrides,
   })
   await new Promise((r) => server.listen(0, '127.0.0.1', r))
+  t.after(() => server.close())
   return { server, token, base: `http://127.0.0.1:${server.address().port}` }
 }
 
-test('宽限窗口内可以重复兑换，预取烧掉的就是第一次', async () => {
-  const { server, token, base: b } = await proxyWith({ graceMs: 60_000 })
+test('宽限窗口内可以重复兑换，预取烧掉的就是第一次', async (t) => {
+  const { token, base: b } = await proxyWith(t, { graceMs: 60_000 })
 
   const first = await fetch(`${b}/?t=${token}`, { redirect: 'manual' })
   const second = await fetch(`${b}/?t=${token}`, { redirect: 'manual' })
@@ -97,11 +98,10 @@ test('宽限窗口内可以重复兑换，预取烧掉的就是第一次', async
   assert.equal(first.status, 302)
   assert.equal(second.status, 302, '窗口内第二次兑换必须仍然放行')
   assert.match(second.headers.get('set-cookie'), /^mp_session=/)
-  server.close()
 })
 
-test('宽限窗口关闭后，正确的令牌也是 404', async () => {
-  const { server, token, base: b } = await proxyWith({ graceMs: 20 })
+test('宽限窗口关闭后，正确的令牌也是 404', async (t) => {
+  const { token, base: b } = await proxyWith(t, { graceMs: 20 })
 
   const first = await fetch(`${b}/?t=${token}`, { redirect: 'manual' })
   await new Promise((r) => setTimeout(r, 40))
@@ -109,11 +109,10 @@ test('宽限窗口关闭后，正确的令牌也是 404', async () => {
 
   assert.equal(first.status, 302)
   assert.equal(late.status, 404)
-  server.close()
 })
 
-test('窗口外的兑换计入限流——那正是泄漏重放的形状', async () => {
-  const { server, token, base: b } = await proxyWith({ graceMs: 20, maxFailures: 2 })
+test('窗口外的兑换计入限流——那正是泄漏重放的形状', async (t) => {
+  const { token, base: b } = await proxyWith(t, { graceMs: 20, maxFailures: 2 })
 
   await fetch(`${b}/?t=${token}`, { redirect: 'manual' })
   await new Promise((r) => setTimeout(r, 40))
@@ -123,53 +122,48 @@ test('窗口外的兑换计入限流——那正是泄漏重放的形状', async
   // 限流已触发，此时连合法 cookie 也一并挡下
   const res = await fetch(`${b}/`, { headers: { cookie: `mp_session=${token}` } })
   assert.equal(res.status, 404)
-  server.close()
 })
 
-test('grace 为 0 时退回一次性语义', async () => {
-  const { server, token, base: b } = await proxyWith({ graceMs: 0 })
+test('grace 为 0 时退回一次性语义', async (t) => {
+  const { token, base: b } = await proxyWith(t, { graceMs: 0 })
 
   const first = await fetch(`${b}/?t=${token}`, { redirect: 'manual' })
   const second = await fetch(`${b}/?t=${token}`, { redirect: 'manual' })
 
   assert.equal(first.status, 302)
   assert.equal(second.status, 404)
-  server.close()
 })
 
-test('窗口从首次兑换开始计时，而非从签发开始', async () => {
-  const { server, token, base: b } = await proxyWith({ graceMs: 60_000 })
+test('窗口从首次兑换开始计时，而非从签发开始', async (t) => {
+  const { token, base: b } = await proxyWith(t, { graceMs: 40 })
 
-  // 静置一段时间后才首次兑换，窗口这时才打开
+  // 静置一段时间后才首次兑换；若窗口在签发时就已打开，此时早已关闭。
   await new Promise((r) => setTimeout(r, 60))
   const first = await fetch(`${b}/?t=${token}`, { redirect: 'manual' })
   const second = await fetch(`${b}/?t=${token}`, { redirect: 'manual' })
 
   assert.equal(first.status, 302)
   assert.equal(second.status, 302)
-  server.close()
 })
 
-test('错误令牌在任何时候都是 404，且不打开窗口', async () => {
-  const { server, token, base: b } = await proxyWith({ graceMs: 60_000 })
+test('错误令牌在任何时候都是 404，且不打开窗口', async (t) => {
+  const { token, base: b } = await proxyWith(t, { graceMs: 0 })
 
   const bad = await fetch(`${b}/?t=${mintToken()}`, { redirect: 'manual' })
   const good = await fetch(`${b}/?t=${token}`, { redirect: 'manual' })
 
   assert.equal(bad.status, 404)
   assert.equal(good.status, 302, '错误令牌不应消耗掉真令牌的首次兑换')
-  server.close()
 })
 
-test('TTL 到期优先于宽限窗口', async () => {
-  const { server, token, base: b } = await proxyWith({
+test('TTL 到期优先于宽限窗口', async (t) => {
+  const { token, base: b } = await proxyWith(t, {
     graceMs: 60_000,
     expiresAt: Date.now() - 1,
   })
 
   const res = await fetch(`${b}/?t=${token}`, { redirect: 'manual' })
   assert.equal(res.status, 404)
-  server.close()
 })
 
 test('a valid session cookie reaches the target and surfaces 502 when it is down', async () => {

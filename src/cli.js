@@ -3,7 +3,7 @@ import { createConnection } from 'node:net'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import * as state from './state.js'
-import { cleanupStale, previewHealth } from './daemon.js'
+import { cleanupAll, cleanupLegacy, cleanupStale, previewHealth } from './daemon.js'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 
@@ -22,7 +22,7 @@ function parseArgs(args) {
       out[a.slice(2)] = true
       continue
     }
-    if (a === '--port' || a === '--ttl' || a === '--steps' || a === '--device') {
+    if (a === '--port' || a === '--ttl' || a === '--steps' || a === '--device' || a === '--grace') {
       out[a.slice(2)] = args[++i]
       continue
     }
@@ -92,6 +92,41 @@ export function formatStart({ tunnelUrl, sessionToken, expiresAt, dev }) {
   return lines.join('\n')
 }
 
+export function formatStatus(previews) {
+  if (previews.length === 0) return 'no active preview'
+
+  return previews.map((s) => {
+    const mins = Math.round((s.expiresAt - Date.now()) / 60_000)
+    // The url goes on its own bare line: mobile chat clients render code
+    // blocks unselectable, and a link the user cannot copy is a link that
+    // never arrives. See skill/SKILL.md.
+    return [
+      `port ${s.targetPort}:`,
+      `${s.tunnelUrl}/?t=${s.sessionToken}`,
+      `  expires in ${mins} min, artifacts: ${(s.artifacts || []).length}`,
+    ].join('\n')
+  }).join('\n\n')
+}
+
+function activePreviews() {
+  return state.list().filter((s) => previewHealth(s).active)
+}
+
+// Returns the port to act on, or null when there is none. Never guesses
+// between several: on a phone the user cannot see the machine's state, and
+// stopping the wrong service costs more than typing --port.
+function resolvePort(parsed) {
+  if (parsed.port !== undefined) return Number(parsed.port)
+
+  const active = activePreviews()
+  if (active.length === 1) return active[0].targetPort
+  if (active.length === 0) return null
+
+  const ports = active.map((s) => s.targetPort).join(', ')
+  console.error(`several previews are active (ports ${ports}). Pass --port to pick one.`)
+  process.exit(1)
+}
+
 function startView(s) {
   return {
     tunnelUrl: s.tunnelUrl,
@@ -114,10 +149,10 @@ function portIsOpen(port) {
   })
 }
 
-async function waitForState(predicate, timeoutMs = 40_000) {
+async function waitForState(port, predicate, timeoutMs = 40_000) {
   const deadline = Date.now() + timeoutMs
   while (Date.now() < deadline) {
-    const s = state.read()
+    const s = state.read(port)
     if (s && predicate(s)) return s
     await new Promise((r) => setTimeout(r, 300))
   }
@@ -129,39 +164,36 @@ async function cmdStart(args) {
   const port = Number(parsed.port ?? 5173)
   const dev = Boolean(parsed.dev)
   const ttl = Number(parsed.ttl ?? 30)
+  const grace = Number(parsed.grace ?? 10)
 
-  const existing = state.read()
-  const health = previewHealth(existing)
-  if (health.active) {
+  const existing = state.read(port)
+  if (previewHealth(existing).active) {
     console.log(formatStart(startView(existing)))
     return
   }
 
-  if (existing) cleanupStale()
+  if (existing) cleanupStale(port)
 
   if (!(await portIsOpen(port))) {
     console.error(`nothing is listening on 127.0.0.1:${port}. Start your app first.`)
     process.exit(1)
   }
 
-  const galleryDir = join(process.env.LOCALAPPDATA || process.cwd(), 'mobile-preview', 'gallery')
+  const galleryDir = state.galleryDir(port)
   const child = spawn(process.execPath, [
     join(HERE, 'daemon-entry.js'),
-    String(port),
-    String(dev),
-    String(ttl),
-    galleryDir,
+    JSON.stringify({ targetPort: port, dev, ttlMinutes: ttl, graceMinutes: grace, galleryDir }),
   ], { detached: true, stdio: 'ignore', windowsHide: true })
   child.unref()
 
-  const s = await waitForState((x) => x.tunnelUrl || x.error)
+  const s = await waitForState(port, (x) => x.tunnelUrl || x.error)
   if (!s) {
     console.error('timed out waiting for the tunnel')
     process.exit(1)
   }
   if (s.error) {
     console.error(s.error)
-    state.clear()
+    state.clear(port)
     process.exit(1)
   }
 
@@ -170,9 +202,15 @@ async function cmdStart(args) {
 
 async function cmdCapture(args) {
   const parsed = parseArgs(args)
-  const s = state.read()
+  const port = resolvePort(parsed)
+  if (port === null) {
+    console.error('no active preview. Run `mp start` first.')
+    process.exit(1)
+  }
+
+  const s = state.read(port)
   if (!previewHealth(s).active) {
-    if (s) cleanupStale()
+    if (s) cleanupStale(port)
     console.error('no active preview. Run `mp start` first.')
     process.exit(1)
   }
@@ -183,7 +221,7 @@ async function cmdCapture(args) {
   const { capture } = await import('./capture.js')
 
   const r = await capture({ url, outDir: s.galleryDir, steps, video, deviceName: parsed.device })
-  state.write({ artifacts: [...(s.artifacts || []), ...r.shots, r.video].filter(Boolean) })
+  state.write(port, { artifacts: [...(s.artifacts || []), ...r.shots, r.video].filter(Boolean) })
 
   console.log(formatCapture({
     tunnelUrl: s.tunnelUrl,
@@ -196,37 +234,52 @@ async function cmdCapture(args) {
 }
 
 function cmdStatus() {
-  const s = state.read()
-  if (!s) {
-    console.log('no active preview')
-    return
+  const legacy = cleanupLegacy()
+  if (legacy.found) {
+    console.log(`cleaned up a legacy single-slot state file (${legacy.killed} process tree(s) terminated)`)
   }
 
-  if (s.error) {
-    console.log(s.error)
-    return
+  const all = state.list()
+  const live = []
+
+  for (const s of all) {
+    if (s.error) {
+      console.log(`port ${s.targetPort}: ${s.error}`)
+      continue
+    }
+
+    const health = previewHealth(s)
+    if (health.active) {
+      live.push(s)
+      continue
+    }
+
+    const why = health.reason === 'expired' ? 'has expired' : 'is stale'
+    console.log(`port ${s.targetPort}: previous preview ${why}; cleaning up`)
+    cleanupStale(s.targetPort)
   }
 
-  const health = previewHealth(s)
-  if (health.reason === 'expired') {
-    console.log('previous preview has expired; cleaning up')
-    cleanupStale()
-    return
-  }
-
-  if (!health.active) {
-    console.log('previous preview is stale; cleaning up')
-    cleanupStale()
-    return
-  }
-
-  console.log(formatStart(startView(s)))
-  console.log(`artifacts: ${(s.artifacts || []).length}`)
+  console.log(formatStatus(live))
 }
 
-function cmdStop() {
-  const r = cleanupStale()
-  console.log(`stopped (${r.killed} process tree(s) terminated)`)
+function cmdStop(args) {
+  const parsed = parseArgs(args)
+
+  if (parsed.all) {
+    const r = cleanupAll()
+    console.log(`stopped (${r.killed} process tree(s) terminated)`)
+    return
+  }
+
+  const port = resolvePort(parsed)
+  if (port === null) {
+    const legacy = cleanupLegacy()
+    console.log(`stopped (${legacy.killed} process tree(s) terminated)`)
+    return
+  }
+
+  const r = cleanupStale(port)
+  console.log(`stopped port ${port} (${r.killed} process tree(s) terminated)`)
 }
 
 export async function main(argv) {

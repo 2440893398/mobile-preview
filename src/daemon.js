@@ -1,13 +1,11 @@
-import { mkdirSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, rmSync } from 'node:fs'
 import { createProxy } from './proxy.js'
 import { hashToken, mintToken } from './auth.js'
 import { isAlive, killTree, startTunnel } from './tunnel.js'
 import * as state from './state.js'
 
-export function cleanupStale() {
-  const s = state.read()
-  if (!s) return { killed: 0 }
-
+function killRecorded(s) {
+  if (!s) return 0
   const pids = [...new Set([s.tunnelPid, s.daemonPid].filter(Boolean))]
   let killed = 0
 
@@ -17,8 +15,43 @@ export function cleanupStale() {
     killed += 1
   }
 
-  state.clear()
+  return killed
+}
+
+export function cleanupStale(port) {
+  const s = state.read(port)
+  if (!s) return { killed: 0 }
+
+  const killed = killRecorded(s)
+  state.clear(port)
   return { killed }
+}
+
+// Pre-multi-slot versions wrote a single state.json. Its processes outlive the
+// upgrade, so find them, kill them, and drop the file. No field migration:
+// reviving an old preview is worthless, not orphaning its tunnel is not.
+export function cleanupLegacy() {
+  const f = state.legacyStatePath()
+  if (!existsSync(f)) return { killed: 0, found: false }
+
+  let s = null
+  try {
+    s = JSON.parse(readFileSync(f, 'utf8'))
+  } catch {
+    s = null
+  }
+
+  const killed = killRecorded(s)
+  rmSync(f, { force: true })
+  return { killed, found: true }
+}
+
+export function cleanupAll() {
+  let killed = 0
+  for (const p of state.list()) killed += cleanupStale(p.targetPort).killed
+
+  const legacy = cleanupLegacy()
+  return { killed: killed + legacy.killed, legacy: legacy.found }
 }
 
 export function previewHealth(s, now = Date.now()) {
@@ -40,7 +73,13 @@ export function previewHealth(s, now = Date.now()) {
   return { active: true, reason: 'active' }
 }
 
-export async function runDaemon({ targetPort, dev = false, ttlMinutes = 30, galleryDir }) {
+export async function runDaemon({
+  targetPort,
+  dev = false,
+  ttlMinutes = 30,
+  graceMinutes = 10,
+  galleryDir,
+}) {
   mkdirSync(galleryDir, { recursive: true })
 
   const galleryToken = mintToken()
@@ -52,6 +91,7 @@ export async function runDaemon({ targetPort, dev = false, ttlMinutes = 30, gall
     galleryToken,
     sessionHash: hashToken(sessionToken),
     expiresAt,
+    graceMs: graceMinutes * 60_000,
     dev,
     targetPort,
   })
@@ -64,7 +104,7 @@ export async function runDaemon({ targetPort, dev = false, ttlMinutes = 30, gall
   const shutdown = () => {
     killTree(tunnelPid)
     proxy.close()
-    state.clear()
+    state.clear(targetPort)
     process.exit(0)
   }
 
@@ -79,9 +119,9 @@ export async function runDaemon({ targetPort, dev = false, ttlMinutes = 30, gall
   process.on('SIGTERM', shutdown)
 
   try {
-    const t = await startTunnel(proxyPort, { logPath: state.tunnelLogPath() })
+    const t = await startTunnel(proxyPort, { logPath: state.tunnelLogPath(targetPort) })
     tunnelPid = t.pid
-    state.write({
+    state.write(targetPort, {
       tunnelUrl: t.url,
       tunnelPid,
       daemonPid: process.pid,
@@ -89,6 +129,7 @@ export async function runDaemon({ targetPort, dev = false, ttlMinutes = 30, gall
       targetPort,
       dev,
       expiresAt,
+      graceMs: graceMinutes * 60_000,
       galleryDir,
       galleryToken,
       sessionToken,
@@ -96,7 +137,7 @@ export async function runDaemon({ targetPort, dev = false, ttlMinutes = 30, gall
     })
   } catch (err) {
     proxy.close()
-    state.write({
+    state.write(targetPort, {
       error: String(err?.message || err),
       daemonPid: process.pid,
     })

@@ -7,7 +7,11 @@ import { join } from 'node:path'
 const dir = mkdtempSync(join(tmpdir(), 'mp-state-'))
 process.env.MP_STATE_DIR = dir
 
-const { read, write, clear, statePath } = await import('../src/state.js')
+const { read, write, clear, statePath, tunnelLogPath } = await import('../src/state.js')
+
+test('tunnel log lives next to the state file', () => {
+  assert.equal(tunnelLogPath(), join(dir, 'cloudflared.log'))
+})
 
 test('read returns null when no state file exists', () => {
   assert.equal(read(), null)

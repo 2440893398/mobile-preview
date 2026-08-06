@@ -10,6 +10,10 @@ export function statePath() {
   return join(stateDir(), 'state.json')
 }
 
+export function tunnelLogPath() {
+  return join(stateDir(), 'cloudflared.log')
+}
+
 export function read() {
   const f = statePath()
   if (!existsSync(f)) return null

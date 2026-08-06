@@ -6,6 +6,7 @@ import { join } from 'node:path'
 import { spawn, spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import { formatCapture, formatStart, formatStatus } from '../src/cli.js'
+import { isAlive } from '../src/tunnel.js'
 
 const URL_ = 'https://tidy-pear.trycloudflare.com'
 const TOK = 'a'.repeat(43)
@@ -236,12 +237,45 @@ test('只有一条活预览时 stop 可以省略 --port', () => {
   // down the whole tree rooted there. Using our own pid would kill this test
   // runner mid-assertion instead of the intended target.
   const dummy = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' })
+  // unref so a leaked child never keeps the test worker's event loop alive.
+  dummy.unref()
   const p = seedPreview(dir, 4321, { tunnelPid: dummy.pid, daemonPid: dummy.pid })
 
-  const res = mp(dir, ['stop'])
+  try {
+    const res = mp(dir, ['stop'])
 
-  assert.equal(res.status, 0)
-  assert.equal(existsSync(p), false)
-  dummy.kill()
-  rmSync(dir, { recursive: true, force: true })
+    assert.equal(res.status, 0)
+    assert.equal(existsSync(p), false)
+  } finally {
+    // kill() in `finally` so an assertion failure above still reaps the
+    // child instead of hanging `node --test` on a referenced setInterval.
+    dummy.kill()
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('daemon 已死但隧道还活着时 stop 省略 --port 仍会收网（Finding 1）', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'mp-cli-'))
+  // daemonPid dead (default seedPreview pid, never alive), tunnelPid a real
+  // live process standing in for an orphaned cloudflared. previewHealth
+  // requires BOTH pids alive, so this preview is "stale", not "active" —
+  // resolvePort therefore returns null and `stop` must fall into the
+  // port === null branch that Finding 1 fixes (cleanupAll instead of
+  // cleanupLegacy). Before the fix, this orphaned tunnel would be left
+  // running while `mp stop` reported success.
+  const dummy = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' })
+  dummy.unref()
+  const p = seedPreview(dir, 4321, { tunnelPid: dummy.pid })
+
+  try {
+    const res = mp(dir, ['stop'])
+
+    assert.equal(res.status, 0)
+    assert.match(res.stdout, /stopped \(1 process tree\(s\) terminated\)/)
+    assert.equal(existsSync(p), false, 'stale slot must be swept, not left behind')
+    assert.equal(isAlive(dummy.pid), false, 'the orphaned tunnel process must actually be killed')
+  } finally {
+    dummy.kill()
+    rmSync(dir, { recursive: true, force: true })
+  }
 })

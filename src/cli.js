@@ -273,8 +273,15 @@ function cmdStop(args) {
 
   const port = resolvePort(parsed)
   if (port === null) {
-    const legacy = cleanupLegacy()
-    console.log(`stopped (${legacy.killed} process tree(s) terminated)`)
+    // resolvePort only counts *active* previews (both pids alive, not
+    // expired). A dead daemon with a still-running cloudflared, or an
+    // expired-but-still-running preview, is stale, not active — so it lands
+    // here too. `stop` with no active preview must still mean "make sure
+    // nothing is running", so sweep every stale per-port slot as well as the
+    // legacy file, not just the legacy file. On an empty state dir this is
+    // still {killed: 0}, so the exit-0-on-empty contract is unchanged.
+    const r = cleanupAll()
+    console.log(`stopped (${r.killed} process tree(s) terminated)`)
     return
   }
 

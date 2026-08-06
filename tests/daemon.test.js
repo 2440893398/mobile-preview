@@ -10,22 +10,20 @@ process.env.MP_STATE_DIR = dir
 const state = await import('../src/state.js')
 const { cleanupAll, cleanupLegacy, cleanupStale, previewHealth } = await import('../src/daemon.js')
 
-test('cleanupStale is a no-op when there is no state', () => {
-  state.clear()
-  assert.deepEqual(cleanupStale(), { killed: 0 })
-})
-
+// Two of the three original no-argument tests here ('is a no-op when there
+// is no state' and 'removes state whose expiry has passed') were dropped:
+// ported to the port(port, patch) signature they duplicated coverage already
+// present below ('cleanupStale 对不存在的预览是无操作' for the no-op case;
+// 'cleanupStale 只清理指定端口' for the write-then-clear case — cleanupStale
+// itself never inspects expiresAt, so the "expiry" test exercised nothing
+// that write-then-clear didn't already). This one is kept and ported because
+// it is the only test that puts *live-looking-but-actually-dead* pids
+// through killRecorded's isAlive() skip path.
 test('cleanupStale clears state referencing dead pids', () => {
-  state.write({ tunnelPid: 999_999, daemonPid: 999_998, tunnelUrl: 'https://x.trycloudflare.com' })
-  const r = cleanupStale()
+  state.write(6001, { tunnelPid: 999_999, daemonPid: 999_998, tunnelUrl: 'https://x.trycloudflare.com' })
+  const r = cleanupStale(6001)
   assert.equal(r.killed, 0, 'dead pids need no killing')
-  assert.equal(state.read(), null, 'state must be wiped')
-})
-
-test('cleanupStale removes state whose expiry has passed', () => {
-  state.write({ expiresAt: Date.now() - 1000, tunnelUrl: 'https://y.trycloudflare.com' })
-  cleanupStale()
-  assert.equal(state.read(), null)
+  assert.equal(state.read(6001), null, 'state must be wiped')
 })
 
 test('previewHealth marks future state with dead pids as stale', () => {

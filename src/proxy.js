@@ -91,12 +91,17 @@ export function createProxy({
   expiresAt,
   dev = false,
   targetPort,
+  graceMs = 10 * 60_000,
   maxFailures = 10,
   failureWindowMs = 5 * 60_000,
 }) {
   const galleryHash = hashToken(galleryToken)
   const failures = new Map()
-  let sessionTokenExchanged = false
+  // Opened by the first successful exchange, not by minting. Link prefetch in
+  // a chat client burns the first exchange before the human ever taps; the
+  // window is what lets the human still get in. Once it closes only the
+  // cookie works, so a URL that leaks later is already dead.
+  let graceUntil = null
 
   function tripped(ip) {
     const f = failures.get(ip)
@@ -155,12 +160,21 @@ export function createProxy({
 
     const qsToken = url.searchParams.get('t')
     if (qsToken) {
-      if (sessionTokenExchanged || !tokenMatches(qsToken, sessionHash)) {
+      if (!tokenMatches(qsToken, sessionHash)) {
         recordFailure(ip)
         return notFound(res)
       }
 
-      sessionTokenExchanged = true
+      const now = Date.now()
+      if (graceUntil === null) {
+        graceUntil = now + graceMs
+      } else if (now >= graceUntil) {
+        // A correct token arriving after the window is the shape of a replayed
+        // leak, so it counts against the limiter.
+        recordFailure(ip)
+        return notFound(res)
+      }
+
       url.searchParams.delete('t')
       const clean = pathname + (url.searchParams.toString() ? `?${url.searchParams}` : '')
       const maxAge = Math.max(0, Math.floor((expiresAt - Date.now()) / 1000))

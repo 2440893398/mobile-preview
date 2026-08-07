@@ -3,7 +3,9 @@ import { createConnection } from 'node:net'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import * as state from './state.js'
-import { cleanupAll, cleanupLegacy, cleanupStale, previewHealth } from './daemon.js'
+import {
+  cleanupAll, cleanupLegacy, cleanupStale, previewHealth, sweepCorruptSlots,
+} from './daemon.js'
 import { establishBudgetMs } from './tunnel.js'
 
 // Covers daemon process startup, the proxy's listen() before it even calls
@@ -251,6 +253,23 @@ function sweepLegacy() {
   }
 }
 
+// Corrupt slots are invisible to state.list() (it skips anything that won't
+// parse), so any path that doesn't go through cleanupAll — status's listing,
+// stop's single-resolved-port branch — walks straight past one and leaves
+// whatever cloudflared it names running forever (Gap 4). Reported the same
+// way reportSweep reports cleanupAll's unreadable ones: a silently deleted
+// record whose process could not be reclaimed must not read as nothing
+// happened.
+function sweepCorrupt() {
+  const { unreadable } = sweepCorruptSlots()
+  if (unreadable.length) {
+    console.log(
+      `warning: removed ${unreadable.length} unreadable state file(s) `
+      + `(port(s) ${unreadable.join(', ')}); any cloudflared they owned may still be running`,
+    )
+  }
+}
+
 function reportSweep(r) {
   console.log(`stopped (${r.killed} process tree(s) terminated)`)
   if (r.unreadable?.length) {
@@ -278,7 +297,25 @@ async function cmdStart(args) {
 
   sweepLegacy()
 
-  const existing = state.read(port)
+  const existingState = state.readState(port)
+  if (existingState.status === 'corrupt') {
+    // read() alone can't tell "no preview here" from "a preview here whose
+    // JSON won't parse" — both come back null. Treating them the same is
+    // what let this branch skip cleanupStale and spawn a second daemon into
+    // a slot that may already have one, sharing one state file between them
+    // from then on. The file often still has tunnelPid/daemonPid in it
+    // (they're the 2nd and 3rd keys write() puts down) — just not parseably
+    // — so say they could not be parsed, not that they are gone.
+    const f = state.statePath(port)
+    console.error(
+      `preview state for port ${port} is corrupt: ${f} could not be parsed as JSON. `
+      + 'Its recorded pids could not be read, so any process it referenced cannot be '
+      + 'reclaimed automatically. Run `mp stop --all` (sweeps corrupt slots) or delete the file.',
+    )
+    process.exit(1)
+  }
+
+  const existing = existingState.value
   if (previewHealth(existing).active) {
     console.log(formatStart(startView(existing)))
     return
@@ -357,6 +394,7 @@ async function cmdCapture(args) {
 
 function cmdStatus() {
   sweepLegacy()
+  sweepCorrupt()
 
   const all = state.list()
   const live = []
@@ -390,6 +428,12 @@ function cmdStop(args) {
   // and cleanupAll is never called — used to print "stopped" while the legacy
   // daemon kept serving. Cheap when there is nothing to do (one existsSync).
   sweepLegacy()
+  // Same reasoning, same escape hatch, for a corrupt slot on a *different*
+  // port: the one-active-preview branch below only ever calls
+  // cleanupStale(port) for the port it resolved, so without this a corrupt
+  // file elsewhere survives every `mp stop` that happens to resolve cleanly
+  // (Gap 4).
+  sweepCorrupt()
 
   if (parsed.all) {
     reportSweep(cleanupAll())

@@ -9,8 +9,81 @@ process.env.MP_STATE_DIR = dir
 
 const state = await import('../src/state.js')
 const {
-  cleanupAll, cleanupLegacy, cleanupStale, clearOwnedState, previewHealth,
+  cleanupAll, cleanupLegacy, cleanupStale, clearOwnedState, previewHealth, runDaemon,
 } = await import('../src/daemon.js')
+
+// runDaemon calls process.exit(1) on tunnel failure and installs real
+// SIGINT/SIGTERM handlers plus TTL timers — none of which a test can let
+// through unmodified. A generous ttlMinutes keeps the TTL timer from firing
+// during a test; handle.dispose() (added alongside the startTunnelFn seam)
+// removes the signal listeners and clears the timers so nothing leaks onto
+// the shared test-runner process between tests.
+async function withFakeDaemon(targetPort, overrides, fn) {
+  const handle = await runDaemon({
+    targetPort,
+    ttlMinutes: 60,
+    graceMinutes: 10,
+    galleryDir: join(dir, `gallery-${targetPort}`),
+    startTunnelFn: async () => ({ url: `https://fake-${targetPort}.trycloudflare.com`, pid: 999_990 - targetPort }),
+    ...overrides,
+  })
+  try {
+    return await fn(handle)
+  } finally {
+    handle.dispose()
+  }
+}
+
+test('runDaemon 接受注入的隧道启动器：状态槽落地隧道 URL 与本进程的 daemonPid（Gap 2）', async () => {
+  const port = 6300
+  await withFakeDaemon(port, {}, async (handle) => {
+    const s = state.read(port)
+    assert.equal(s.tunnelUrl, `https://fake-${port}.trycloudflare.com`, '不该真的去起 cloudflared')
+    assert.equal(s.daemonPid, process.pid)
+    assert.equal(s.proxyPort, handle.proxyPort)
+    handle.shutdown()
+  })
+  assert.equal(state.read(port), null, 'shutdown 之后槽位必须清掉')
+})
+
+test('runDaemon 接好了代理的 onWindowOpen：真实请求命中兑换路径后，graceOpenedAt 落地到状态文件（Gap 2）', async () => {
+  const port = 6301
+  await withFakeDaemon(port, {}, async (handle) => {
+    const before = state.read(port)
+    assert.equal(before.graceOpenedAt, undefined, '还没人兑换过')
+
+    await fetch(`http://127.0.0.1:${before.proxyPort}/?t=${before.sessionToken}`, { redirect: 'manual' })
+
+    const after = state.read(port)
+    assert.equal(typeof after.graceOpenedAt, 'number', 'onWindowOpen 必须把时刻写进状态文件')
+    handle.shutdown()
+  })
+})
+
+test('runDaemon 返回的 shutdown 只清理仍属于自己的槽位（Gap 2）', async () => {
+  const port = 6302
+  await withFakeDaemon(port, {}, async (handle) => {
+    // 模拟这一格已经被新 daemon 接管（双起，或两个并发的
+    // `mp start --port N`）：旧 daemon 的 shutdown 不许把它抹掉。
+    state.write(port, { daemonPid: 424_242 })
+
+    handle.shutdown()
+
+    const s = state.read(port)
+    assert.ok(s, '不是自己的槽位时必须原样留下')
+    assert.equal(s.daemonPid, 424_242, '不能把新 daemon 的记录抹掉')
+  })
+  state.clear(port)
+})
+
+test('runDaemon 返回的 shutdown 清理自己仍拥有的槽位（Gap 2）', async () => {
+  const port = 6303
+  await withFakeDaemon(port, {}, async (handle) => {
+    assert.ok(state.read(port), '起来之后应该有状态')
+    handle.shutdown()
+    assert.equal(state.read(port), null, 'shutdown 拥有槽位时必须清掉它')
+  })
+})
 
 // Two of the three original no-argument tests here ('is a no-op when there
 // is no state' and 'removes state whose expiry has passed') were dropped:

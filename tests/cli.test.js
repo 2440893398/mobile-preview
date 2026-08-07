@@ -485,6 +485,71 @@ test('start 也清扫旧版遗留的单槽状态文件（Finding 4）', () => {
   rmSync(dir, { recursive: true, force: true })
 })
 
+test('start 遇到本端口的损坏状态槽位时拒绝双起，而不是当成没有预览悄悄再起一个（Gap 1）', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'mp-cli-'))
+  mkdirSync(join(dir, 'previews'), { recursive: true })
+  const corrupt = join(dir, 'previews', '4321.json')
+  // 截断在写到 tunnelPid/daemonPid 之后——它们是 write() 落盘的第 2、3 个
+  // key，真实的半截文件里大概率还留着这两个字段，只是解析不出来。
+  writeFileSync(corrupt, '{"tunnelUrl":"https://x.trycloudflare.com","tunnelPid":4242,"daemo', 'utf8')
+
+  const res = mp(dir, ['start', '--port', '4321'])
+
+  assert.equal(res.status, 1)
+  assert.match(res.stderr, /corrupt/i)
+  assert.match(res.stderr, /4321\.json/, '必须点名是哪个文件')
+  assert.match(res.stderr, /stop --all/, '必须给出可执行的补救动作')
+  assert.doesNotMatch(res.stderr, /unrecoverable|无法恢复/i, '只能说解析不出来，不能说 pid 原则上救不回来了')
+  assert.doesNotMatch(res.stderr, /nothing is listening/, '必须在探测端口之前就拒绝，不能走到那一步')
+  assert.equal(existsSync(corrupt), true, '损坏槽位必须原样保留，不能被 start 动，不能被当成「没有预览」')
+  rmSync(dir, { recursive: true, force: true })
+})
+
+test('恰好一条活预览时 stop 仍会清扫别的端口上的损坏槽位（Gap 4）', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'mp-cli-'))
+  mkdirSync(join(dir, 'previews'), { recursive: true })
+  const corrupt = join(dir, 'previews', '4321.json')
+  writeFileSync(corrupt, '{"tunnelPid": 4242, "daemo', 'utf8')
+
+  // resolvePort 会落到这一条活预览上，cleanupStale(3000) 只碰 3000 这一格——
+  // 旧代码从不经过 cleanupAll，4321 的损坏槽位（以及它可能引用的 cloudflared）
+  // 就永远留在那儿，且对 status/stop 都不可见。
+  const dummy = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' })
+  dummy.unref()
+  seedPreview(dir, 3000, { tunnelPid: dummy.pid, daemonPid: dummy.pid })
+
+  try {
+    const res = mp(dir, ['stop'])
+
+    assert.equal(res.status, 0)
+    assert.match(res.stdout, /stopped port 3000/)
+    assert.equal(existsSync(corrupt), false, '损坏槽位必须被清掉，不能因为不是目标端口就放过')
+    assert.match(res.stdout, /4321/, '清掉了什么必须报出来，不能悄悄删掉')
+    assert.match(res.stdout, /may still be running/, 'pid 读不出来就杀不掉，必须说清楚')
+  } finally {
+    dummy.kill()
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('status 会清扫 list() 看不见的损坏槽位（Gap 4）', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'mp-cli-'))
+  mkdirSync(join(dir, 'previews'), { recursive: true })
+  const corrupt = join(dir, 'previews', '4321.json')
+  writeFileSync(corrupt, '{"tunnelPid": 4242, "daemo', 'utf8')
+
+  // state.list() 跳过解析不了的条目，cmdStatus 原本只在 list() 给出的条目上
+  // 做 previewHealth 判断，从不触达 cleanupAll——这一格连同它可能引用的
+  // cloudflared 对 status 永远不可见。
+  const res = mp(dir, ['status'])
+
+  assert.equal(res.status, 0)
+  assert.equal(existsSync(corrupt), false, '损坏槽位必须被清掉')
+  assert.match(res.stdout, /4321/, '清掉了什么必须报出来')
+  assert.match(res.stdout, /may still be running/)
+  rmSync(dir, { recursive: true, force: true })
+})
+
 test('恰好一条活预览时 stop 仍清扫遗留文件（Finding 4）', () => {
   const dir = mkdtempSync(join(tmpdir(), 'mp-cli-'))
   const legacy = join(dir, 'state.json')

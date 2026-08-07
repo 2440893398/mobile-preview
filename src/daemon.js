@@ -49,12 +49,13 @@ export function cleanupLegacy() {
 
 // Sweeps by directory listing rather than by state.list(). list() skips any
 // slot whose JSON will not parse, so sweeping by it left a corrupt slot — and
-// the cloudflared it owns — running forever, un-sweepable by any command. The
-// unreadable ones cannot have their pids reclaimed, so they are reported
-// separately: counting them as a clean stop would be a lie.
-export function cleanupAll() {
+// the cloudflared it owns — running forever, invisible to every command that
+// only ever consults list() (`mp status`) or acts on a single resolved port
+// (`mp stop` with exactly one active preview — see Gap 4). Split out from
+// cleanupAll so those paths can reach it without also touching every other
+// port's live preview, which a full cleanupAll would.
+export function sweepCorruptSlots() {
   const dir = state.previewsDir()
-  let killed = 0
   const unreadable = []
 
   if (existsSync(dir)) {
@@ -63,16 +64,33 @@ export function cleanupAll() {
       if (!m) continue
 
       const port = Number(m[1])
-      if (state.read(port)) {
-        killed += cleanupStale(port).killed
-        continue
-      }
+      if (state.read(port)) continue // parses fine — not this sweep's job
 
       rmSync(join(dir, name), { force: true })
       unreadable.push(port)
     }
   }
 
+  return { unreadable }
+}
+
+// The unreadable ones cannot have their pids reclaimed, so they are reported
+// separately: counting them as a clean stop would be a lie.
+export function cleanupAll() {
+  const dir = state.previewsDir()
+  let killed = 0
+
+  if (existsSync(dir)) {
+    for (const name of readdirSync(dir)) {
+      const m = /^(\d+)\.json$/.exec(name)
+      if (!m) continue
+
+      const port = Number(m[1])
+      if (state.read(port)) killed += cleanupStale(port).killed
+    }
+  }
+
+  const { unreadable } = sweepCorruptSlots()
   const legacy = cleanupLegacy()
   return { killed: killed + legacy.killed, legacy: legacy.found, unreadable }
 }
@@ -115,6 +133,12 @@ export async function runDaemon({
   ttlMinutes = 30,
   graceMinutes = 10,
   galleryDir,
+  // Mirrors the spawnFn seam startTunnel already has. Without it every path
+  // downstream of this call — the state write on success, the daemonPid
+  // ownership check in shutdown, the onWindowOpen wire to state.write — was
+  // only reachable by actually spawning cloudflared, so it was covered by
+  // inspection, not by a test.
+  startTunnelFn = startTunnel,
 }) {
   mkdirSync(galleryDir, { recursive: true })
 
@@ -150,25 +174,44 @@ export async function runDaemon({
 
   let tunnelPid = null
 
+  // Pure cleanup, split from the process.exit below on purpose: a test can
+  // call this directly and observe its effect, whereas nothing survives
+  // calling process.exit on the process it is running in.
   const shutdown = () => {
     killTree(tunnelPid)
     proxy.close()
     clearOwnedState(targetPort)
+  }
+
+  const exitOnShutdown = () => {
+    shutdown()
     process.exit(0)
   }
 
-  const ttlTimer = setTimeout(shutdown, Math.max(0, expiresAt - Date.now()))
+  const ttlTimer = setTimeout(exitOnShutdown, Math.max(0, expiresAt - Date.now()))
   ttlTimer.unref?.()
   const pollTimer = setInterval(() => {
-    if (Date.now() >= expiresAt) shutdown()
+    if (Date.now() >= expiresAt) exitOnShutdown()
   }, 15_000)
   pollTimer.unref?.()
 
-  process.on('SIGINT', shutdown)
-  process.on('SIGTERM', shutdown)
+  process.on('SIGINT', exitOnShutdown)
+  process.on('SIGTERM', exitOnShutdown)
+
+  // Undoes the two process.on calls and the two timers above. The daemon
+  // process itself never calls this — it lives until exitOnShutdown ends the
+  // process — but a test driving runDaemon in-process must, or every test
+  // that does leaks another pair of global SIGINT/SIGTERM listeners onto the
+  // shared test runner process.
+  const dispose = () => {
+    clearTimeout(ttlTimer)
+    clearInterval(pollTimer)
+    process.removeListener('SIGINT', exitOnShutdown)
+    process.removeListener('SIGTERM', exitOnShutdown)
+  }
 
   try {
-    const t = await startTunnel(proxyPort, { logPath: state.tunnelLogPath(targetPort) })
+    const t = await startTunnelFn(proxyPort, { logPath: state.tunnelLogPath(targetPort) })
     tunnelPid = t.pid
     state.write(targetPort, {
       tunnelUrl: t.url,
@@ -185,11 +228,16 @@ export async function runDaemon({
       artifacts: [],
     })
   } catch (err) {
+    dispose()
     proxy.close()
     state.write(targetPort, {
       error: String(err?.message || err),
       daemonPid: process.pid,
     })
     process.exit(1)
+  }
+
+  return {
+    proxy, proxyPort, targetPort, shutdown, dispose,
   }
 }

@@ -84,6 +84,19 @@ function forward(req, res, { targetPort }) {
   req.pipe(upstream)
 }
 
+// Behind cloudflared every connection arrives from 127.0.0.1, so keying the
+// limiter on the socket address buckets every remote visitor into one counter:
+// ten prefetches by a chat client would lock out the legitimate cookie-holder.
+// The proxy binds 127.0.0.1 only, so the sole route in is through cloudflared,
+// and Cloudflare's edge sets CF-Connecting-IP itself (a client-supplied value
+// is overwritten there, so it cannot be forged from the outside).
+function clientIp(req) {
+  const raw = req.headers['cf-connecting-ip']
+  const value = Array.isArray(raw) ? raw[0] : raw
+  const ip = typeof value === 'string' ? value.trim() : ''
+  return ip || req.socket.remoteAddress || 'unknown'
+}
+
 export function createProxy({
   galleryDir,
   galleryToken,
@@ -94,9 +107,16 @@ export function createProxy({
   graceMs = 10 * 60_000,
   maxFailures = 10,
   failureWindowMs = 5 * 60_000,
+  onWindowOpen = null,
 }) {
   const galleryHash = hashToken(galleryToken)
   const failures = new Map()
+  // Fail closed. A non-finite graceMs (a `--grace 10m` typo that made it
+  // through) would set graceUntil to NaN, and nothing is ever >= NaN — the
+  // window would never close and the URL would be a permanent credential.
+  // Degrade to one-shot instead, never to "never closes". The CLI validates
+  // too, but createProxy has a second caller and this failure mode is silent.
+  const grace = Number.isFinite(graceMs) ? Math.max(0, graceMs) : 0
   // Opened by the first successful exchange, not by minting. Link prefetch in
   // a chat client burns the first exchange before the human ever taps; the
   // window is what lets the human still get in. Once it closes only the
@@ -124,7 +144,7 @@ export function createProxy({
   }
 
   return createServer((req, res) => {
-    const ip = req.socket.remoteAddress || 'unknown'
+    const ip = clientIp(req)
     const url = new URL(req.url || '/', 'http://localhost')
     const pathname = url.pathname
 
@@ -167,7 +187,19 @@ export function createProxy({
 
       const now = Date.now()
       if (graceUntil === null) {
-        graceUntil = now + graceMs
+        // Written once, on the first exchange only: the window must not slide.
+        // An implementation that re-armed here would keep the whole suite
+        // green while making the window unbounded for any client that polls
+        // the link — see the non-sliding test in tests/proxy.test.js.
+        graceUntil = now + grace
+        // Bookkeeping only. The callback exists so the daemon can record the
+        // moment in the state file without proxy.js ever importing state.js
+        // (spec §5 module boundaries); it must never take a request down.
+        try {
+          onWindowOpen?.({ at: now, until: graceUntil })
+        } catch {
+          // ignored on purpose
+        }
       } else if (now >= graceUntil) {
         // A correct token arriving after the window is the shape of a replayed
         // leak, so it counts against the limiter.

@@ -1,4 +1,5 @@
-import { existsSync, mkdirSync, readFileSync, rmSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync } from 'node:fs'
+import { join } from 'node:path'
 import { createProxy } from './proxy.js'
 import { hashToken, mintToken } from './auth.js'
 import { isAlive, killTree, startTunnel } from './tunnel.js'
@@ -46,12 +47,47 @@ export function cleanupLegacy() {
   return { killed, found: true }
 }
 
+// Sweeps by directory listing rather than by state.list(). list() skips any
+// slot whose JSON will not parse, so sweeping by it left a corrupt slot — and
+// the cloudflared it owns — running forever, un-sweepable by any command. The
+// unreadable ones cannot have their pids reclaimed, so they are reported
+// separately: counting them as a clean stop would be a lie.
 export function cleanupAll() {
+  const dir = state.previewsDir()
   let killed = 0
-  for (const p of state.list()) killed += cleanupStale(p.targetPort).killed
+  const unreadable = []
+
+  if (existsSync(dir)) {
+    for (const name of readdirSync(dir)) {
+      const m = /^(\d+)\.json$/.exec(name)
+      if (!m) continue
+
+      const port = Number(m[1])
+      if (state.read(port)) {
+        killed += cleanupStale(port).killed
+        continue
+      }
+
+      rmSync(join(dir, name), { force: true })
+      unreadable.push(port)
+    }
+  }
 
   const legacy = cleanupLegacy()
-  return { killed: killed + legacy.killed, legacy: legacy.found }
+  return { killed: killed + legacy.killed, legacy: legacy.found, unreadable }
+}
+
+// A daemon may only clear the slot it still owns. Two concurrent
+// `mp start --port N` (cmdStart reads, then spawns, with nothing in between)
+// or a double-spawn over a corrupt file can leave an older daemon alive with
+// a newer one holding the slot; the older one's TTL firing would otherwise
+// wipe the newer one's record and orphan its tunnel.
+export function clearOwnedState(port, pid = process.pid) {
+  const s = state.read(port)
+  if (!s || s.daemonPid !== pid) return false
+
+  state.clear(port)
+  return true
 }
 
 export function previewHealth(s, now = Date.now()) {
@@ -86,14 +122,27 @@ export async function runDaemon({
   const sessionToken = mintToken()
   const expiresAt = Date.now() + ttlMinutes * 60_000
 
+  const graceMs = graceMinutes * 60_000
+
   const proxy = createProxy({
     galleryDir,
     galleryToken,
     sessionHash: hashToken(sessionToken),
     expiresAt,
-    graceMs: graceMinutes * 60_000,
+    graceMs,
     dev,
     targetPort,
+    // Record the moment the window opened so `mp status` can say that the
+    // printed link is no longer exchangeable. The proxy knows when it happens
+    // but must not know about state.js (spec §5), so it hands the moment over
+    // and the daemon — which owns the state file — does the writing.
+    onWindowOpen: ({ at }) => {
+      try {
+        state.write(targetPort, { graceOpenedAt: at })
+      } catch {
+        // Status detail is not worth failing a request the user is making.
+      }
+    },
   })
 
   await new Promise((resolve) => proxy.listen(0, '127.0.0.1', resolve))
@@ -104,7 +153,7 @@ export async function runDaemon({
   const shutdown = () => {
     killTree(tunnelPid)
     proxy.close()
-    state.clear(targetPort)
+    clearOwnedState(targetPort)
     process.exit(0)
   }
 
@@ -129,7 +178,7 @@ export async function runDaemon({
       targetPort,
       dev,
       expiresAt,
-      graceMs: graceMinutes * 60_000,
+      graceMs,
       galleryDir,
       galleryToken,
       sessionToken,

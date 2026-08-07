@@ -14,9 +14,11 @@ const DAEMON_STARTUP_SLACK_MS = 10_000
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 
-function argOf(args, name) {
-  const i = args.indexOf(name)
-  return i >= 0 ? args[i + 1] : undefined
+const VALUE_FLAGS = new Set(['--port', '--ttl', '--steps', '--device', '--grace'])
+
+function fail(msg) {
+  console.error(msg)
+  process.exit(1)
 }
 
 function parseArgs(args) {
@@ -29,8 +31,15 @@ function parseArgs(args) {
       out[a.slice(2)] = true
       continue
     }
-    if (a === '--port' || a === '--ttl' || a === '--steps' || a === '--device' || a === '--grace') {
-      out[a.slice(2)] = args[++i]
+    if (VALUE_FLAGS.has(a)) {
+      const v = args[i + 1]
+      // A value flag with nothing after it used to record `undefined`, which
+      // is indistinguishable from "flag absent" — so `mp stop --port` silently
+      // auto-resolved a preview the user never named. Refuse instead: the
+      // whole port-resolution design rests on never guessing.
+      if (v === undefined || v.startsWith('--')) fail(`${a} needs a value`)
+      out[a.slice(2)] = v
+      i += 1
       continue
     }
     if (a.startsWith('--')) {
@@ -41,6 +50,23 @@ function parseArgs(args) {
   }
 
   return out
+}
+
+// Every numeric flag goes through here. A typo that becomes NaN is silent and
+// dangerous downstream: `--grace 10m` makes graceUntil NaN, and since nothing
+// is ever >= NaN the grace window never closes — the session URL becomes a
+// permanent credential. `--ttl abc` makes the setTimeout fire in 1ms and the
+// daemon dies instantly. Reject at the boundary, name the flag and the value.
+function numericFlag(parsed, name, fallback) {
+  const raw = parsed[name]
+  if (raw === undefined) return fallback
+
+  const text = String(raw).trim()
+  const n = Number(text)
+  if (text === '' || !Number.isFinite(n)) {
+    fail(`--${name} must be a number, got ${JSON.stringify(String(raw))}`)
+  }
+  return n
 }
 
 async function loadSteps(stepPath) {
@@ -99,19 +125,36 @@ export function formatStart({ tunnelUrl, sessionToken, expiresAt, dev }) {
   return lines.join('\n')
 }
 
-export function formatStatus(previews) {
+// True once the grace window that opened on the first exchange has closed:
+// the link still prints, but tapping it now returns the deliberately
+// uninformative 404. graceOpenedAt is recorded by the daemon (see
+// createProxy's onWindowOpen); a preview nobody has tapped yet has none.
+function windowClosed(s, now) {
+  if (!s.graceOpenedAt) return false
+  const grace = Number.isFinite(s.graceMs) ? s.graceMs : 0
+  return now >= s.graceOpenedAt + grace
+}
+
+export function formatStatus(previews, now = Date.now()) {
   if (previews.length === 0) return 'no active preview'
 
   return previews.map((s) => {
-    const mins = Math.round((s.expiresAt - Date.now()) / 60_000)
+    const mins = Math.round((s.expiresAt - now) / 60_000)
     // The url goes on its own bare line: mobile chat clients render code
     // blocks unselectable, and a link the user cannot copy is a link that
     // never arrives. See skill/SKILL.md.
-    return [
+    const lines = [
       `port ${s.targetPort}:`,
       `${s.tunnelUrl}/?t=${s.sessionToken}`,
       `  expires in ${mins} min, artifacts: ${(s.artifacts || []).length}`,
-    ].join('\n')
+    ]
+    if (windowClosed(s, now)) {
+      lines.push(
+        '  link no longer exchangeable — the phone\'s existing session still'
+        + ' works; run mp stop && mp start for a fresh link',
+      )
+    }
+    return lines.join('\n')
   }).join('\n\n')
 }
 
@@ -123,7 +166,7 @@ function activePreviews() {
 // between several: on a phone the user cannot see the machine's state, and
 // stopping the wrong service costs more than typing --port.
 function resolvePort(parsed) {
-  if (parsed.port !== undefined) return Number(parsed.port)
+  if (parsed.port !== undefined) return numericFlag(parsed, 'port', null)
 
   const active = activePreviews()
   if (active.length === 1) return active[0].targetPort
@@ -162,22 +205,52 @@ export function tunnelWaitBudgetMs() {
   return establishBudgetMs() + DAEMON_STARTUP_SLACK_MS
 }
 
-async function waitForState(port, predicate, timeoutMs = tunnelWaitBudgetMs()) {
+// `stopped` lets the caller cut the wait short. The budget is 136s — right
+// for the retry case, far too long to sit silent when the daemon died in its
+// first second and its stdio went to /dev/null. A daemon writes its state
+// file synchronously before exiting, so an exit observed at the top of an
+// iteration is always preceded by a poll that could already see the result.
+async function waitForState(port, predicate, {
+  timeoutMs = tunnelWaitBudgetMs(),
+  stopped = () => false,
+} = {}) {
   const deadline = Date.now() + timeoutMs
-  while (Date.now() < deadline) {
+  for (;;) {
     const s = state.read(port)
     if (s && predicate(s)) return s
+    if (stopped()) return null
+    if (Date.now() >= deadline) return null
     await new Promise((r) => setTimeout(r, 300))
   }
-  return null
+}
+
+function sweepLegacy() {
+  const legacy = cleanupLegacy()
+  if (legacy.found) {
+    console.log(`cleaned up a legacy single-slot state file (${legacy.killed} process tree(s) terminated)`)
+  }
+}
+
+function reportSweep(r) {
+  console.log(`stopped (${r.killed} process tree(s) terminated)`)
+  if (r.unreadable?.length) {
+    // Their recorded pids were unreadable, so whatever they owned could not be
+    // killed. Saying "stopped" and nothing else would be a lie.
+    console.log(
+      `warning: removed ${r.unreadable.length} unreadable state file(s) `
+      + `(port(s) ${r.unreadable.join(', ')}); any cloudflared they owned may still be running`,
+    )
+  }
 }
 
 async function cmdStart(args) {
   const parsed = parseArgs(args)
-  const port = Number(parsed.port ?? 5173)
+  const port = numericFlag(parsed, 'port', 5173)
   const dev = Boolean(parsed.dev)
-  const ttl = Number(parsed.ttl ?? 30)
-  const grace = Number(parsed.grace ?? 10)
+  const ttl = numericFlag(parsed, 'ttl', 30)
+  const grace = numericFlag(parsed, 'grace', 10)
+
+  sweepLegacy()
 
   const existing = state.read(port)
   if (previewHealth(existing).active) {
@@ -199,9 +272,19 @@ async function cmdStart(args) {
   ], { detached: true, stdio: 'ignore', windowsHide: true })
   child.unref()
 
-  const s = await waitForState(port, (x) => x.tunnelUrl || x.error)
+  // unref() does not suppress the exit event, and stdio: 'ignore' means the
+  // daemon's own error message goes nowhere — so its exit code is the only
+  // signal we get that it died before writing anything.
+  let exitCode = null
+  child.once('exit', (code) => { exitCode = code ?? -1 })
+
+  const s = await waitForState(port, (x) => x.tunnelUrl || x.error, {
+    stopped: () => exitCode !== null,
+  })
   if (!s) {
-    console.error('timed out waiting for the tunnel')
+    console.error(exitCode !== null
+      ? `the preview daemon exited (code ${exitCode}) before the tunnel came up`
+      : 'timed out waiting for the tunnel')
     process.exit(1)
   }
   if (s.error) {
@@ -247,10 +330,7 @@ async function cmdCapture(args) {
 }
 
 function cmdStatus() {
-  const legacy = cleanupLegacy()
-  if (legacy.found) {
-    console.log(`cleaned up a legacy single-slot state file (${legacy.killed} process tree(s) terminated)`)
-  }
+  sweepLegacy()
 
   const all = state.list()
   const live = []
@@ -278,9 +358,15 @@ function cmdStatus() {
 function cmdStop(args) {
   const parsed = parseArgs(args)
 
+  // Unconditionally, not just on --all or the no-preview branch: spec §8 says
+  // stop handles a leftover pre-multi-slot state.json, and the case that
+  // actually reaches a user — one active preview, so resolvePort finds a port
+  // and cleanupAll is never called — used to print "stopped" while the legacy
+  // daemon kept serving. Cheap when there is nothing to do (one existsSync).
+  sweepLegacy()
+
   if (parsed.all) {
-    const r = cleanupAll()
-    console.log(`stopped (${r.killed} process tree(s) terminated)`)
+    reportSweep(cleanupAll())
     return
   }
 
@@ -293,8 +379,7 @@ function cmdStop(args) {
     // nothing is running", so sweep every stale per-port slot as well as the
     // legacy file, not just the legacy file. On an empty state dir this is
     // still {killed: 0}, so the exit-0-on-empty contract is unchanged.
-    const r = cleanupAll()
-    console.log(`stopped (${r.killed} process tree(s) terminated)`)
+    reportSweep(cleanupAll())
     return
   }
 

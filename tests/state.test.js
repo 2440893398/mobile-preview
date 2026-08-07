@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -101,6 +101,31 @@ test('previews 目录不存在时 list 返回空数组', () => {
     process.env.MP_STATE_DIR = prev
     rmSync(empty, { recursive: true, force: true })
   }
+})
+
+test('write 是原子的：改名覆盖，而不是就地截断改写（Finding 2）', () => {
+  // write runs on every `mp capture`, and a plain writeFileSync interrupted
+  // mid-write leaves truncated JSON — which read() reports as null, list()
+  // skips, and cleanup therefore never sweeps, orphaning a live cloudflared.
+  // The mechanism that rules that out is write-elsewhere-then-rename, and the
+  // observable signature of a rename is that the file identity changes: an
+  // in-place write keeps the same one. (NTFS bumps the sequence number in the
+  // high bits of the file index even when it reuses an MFT record, so a fresh
+  // file never reports the identity of the one it replaced.)
+  write(6100, { generation: 1 })
+  const before = statSync(statePath(6100))
+
+  write(6100, { generation: 2 })
+  const after = statSync(statePath(6100))
+
+  assert.notEqual(String(after.ino), String(before.ino), '就地改写会保留同一个文件身份；原子写入必然换掉它')
+  assert.equal(read(6100).generation, 2, '合并写入的语义不变')
+  assert.deepEqual(
+    readdirSync(previewsDir()).filter((n) => n.endsWith('.tmp')),
+    [],
+    '不得留下临时文件',
+  )
+  clear(6100)
 })
 
 test('read 遇到损坏 json 返回 null 而非抛异常', () => {

@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -8,7 +8,9 @@ const dir = mkdtempSync(join(tmpdir(), 'mp-daemon-'))
 process.env.MP_STATE_DIR = dir
 
 const state = await import('../src/state.js')
-const { cleanupAll, cleanupLegacy, cleanupStale, previewHealth } = await import('../src/daemon.js')
+const {
+  cleanupAll, cleanupLegacy, cleanupStale, clearOwnedState, previewHealth,
+} = await import('../src/daemon.js')
 
 // Two of the three original no-argument tests here ('is a no-op when there
 // is no state' and 'removes state whose expiry has passed') were dropped:
@@ -107,6 +109,51 @@ test('cleanupAll 顺带处置遗留文件并报告', () => {
 
   assert.equal(r.legacy, true)
   assert.equal(existsSync(state.legacyStatePath()), false)
+})
+
+test('cleanupAll 清扫 list() 看不见的损坏状态文件，并如实报告（Finding 2）', () => {
+  cleanupAll()
+  mkdirSync(state.previewsDir(), { recursive: true })
+  const corrupt = join(state.previewsDir(), '6123.json')
+  writeFileSync(corrupt, '{"tunnelPid": 4242, "daemo', 'utf8') // 写到一半被打断
+
+  // list() 跳过它，所以按 list() 收网的旧实现永远扫不到这一格，
+  // 其 cloudflared 会一直挂着，且下一次 start 还会再起一个 daemon。
+  assert.equal(state.list().some((s) => s.targetPort === 6123), false)
+
+  const r = cleanupAll()
+
+  assert.equal(existsSync(corrupt), false, '损坏的槽位必须被清掉')
+  assert.deepEqual(r.unreadable, [6123], '读不出 pid 就杀不掉，必须单独报出来，不能算作干净地停掉了')
+})
+
+test('cleanupAll 仍然照常清扫读得出的槽位', () => {
+  cleanupAll()
+  state.write(6124, { tunnelUrl: 'https://a.trycloudflare.com' })
+  writeFileSync(join(state.previewsDir(), '6125.json'), 'garbage', 'utf8')
+
+  const r = cleanupAll()
+
+  assert.deepEqual(state.list(), [])
+  assert.deepEqual(r.unreadable, [6125])
+  assert.equal(existsSync(state.statePath(6124)), false)
+})
+
+test('clearOwnedState 只清理仍属于自己的槽位（Finding 3）', () => {
+  // 老 daemon 的 TTL 到点时，这一格可能已经被新 daemon 接管了
+  //（双起，或两个并发的 mp start --port N）。无条件 clear 会抹掉新 daemon
+  // 的记录，把它的隧道变成孤儿——status/stop 从此都找不到它。
+  state.write(6200, { daemonPid: 4242, tunnelUrl: 'https://new.trycloudflare.com' })
+
+  assert.equal(clearOwnedState(6200, 999_998), false, '不是自己的槽位，不许动')
+  assert.ok(state.read(6200), '新 daemon 的记录必须原样留下')
+
+  assert.equal(clearOwnedState(6200, 4242), true, '是自己的槽位就照常清理')
+  assert.equal(state.read(6200), null)
+})
+
+test('clearOwnedState 对不存在的槽位是无操作', () => {
+  assert.equal(clearOwnedState(6201, 4242), false)
 })
 
 process.on('exit', () => rmSync(dir, { recursive: true, force: true }))

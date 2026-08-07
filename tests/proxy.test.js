@@ -166,6 +166,95 @@ test('TTL 到期优先于宽限窗口', async (t) => {
   assert.equal(res.status, 404)
 })
 
+test('graceMs 非有限值时退回一次性，绝不是「窗口永不关闭」（Finding 1）', async (t) => {
+  // `mp start --grace 10m` used to reach here as NaN. graceUntil became NaN,
+  // and since nothing is ever >= NaN the closing test never fired: every later
+  // ?t= request got a fresh cookie, i.e. the URL became a permanent credential.
+  const { token, base: b } = await proxyWith(t, { graceMs: NaN })
+
+  const first = await fetch(`${b}/?t=${token}`, { redirect: 'manual' })
+  const second = await fetch(`${b}/?t=${token}`, { redirect: 'manual' })
+
+  assert.equal(first.status, 302)
+  assert.equal(second.status, 404, '非有限的 graceMs 必须 fail closed，退化为一次性')
+})
+
+test('宽限窗口不滑动：窗口内的兑换不会重新上弦（Finding 9）', async (t) => {
+  // The non-sliding property is what bounds the leak. An implementation that
+  // re-armed graceUntil on every exchange would keep every other test in this
+  // file green while making the window unbounded for a client that polls the
+  // link — so the property needs a test of its own.
+  const { token, base: b } = await proxyWith(t, { graceMs: 200 })
+
+  await fetch(`${b}/?t=${token}`, { redirect: 'manual' }) // 开窗
+  await new Promise((r) => setTimeout(r, 120))
+  await fetch(`${b}/?t=${token}`, { redirect: 'manual' }) // 不得重新上弦
+  await new Promise((r) => setTimeout(r, 120))
+
+  const late = await fetch(`${b}/?t=${token}`, { redirect: 'manual' })
+  assert.equal(late.status, 404, '窗口应当从首次兑换起 200ms 关闭，与其后的兑换无关')
+})
+
+test('限流按 CF-Connecting-IP 分桶，不把所有远端访客并作一桶（Finding 7）', async (t) => {
+  // Behind cloudflared every socket says 127.0.0.1, so keying on it made
+  // maxFailures a global counter: someone else's ten bad requests locked out
+  // the legitimate cookie-holder, who then saw the same opaque 404.
+  const { token, base: b } = await proxyWith(t, { maxFailures: 2 })
+
+  for (let i = 0; i < 3; i += 1) {
+    await fetch(`${b}/?t=${mintToken()}`, { headers: { 'CF-Connecting-IP': '203.0.113.9' } })
+  }
+
+  const noisy = await fetch(`${b}/`, {
+    headers: { 'CF-Connecting-IP': '203.0.113.9', cookie: `mp_session=${token}` },
+  })
+  assert.equal(noisy.status, 404, '触发限流的那个 IP 仍应被挡下')
+
+  const legit = await fetch(`${b}/`, {
+    headers: { 'CF-Connecting-IP': '198.51.100.4', cookie: `mp_session=${token}` },
+  })
+  // 502 = 已经放行到目标（targetPort 1 没人监听），即未被连坐
+  assert.equal(legit.status, 502, '持合法 cookie 的另一个 IP 不该被别人的失败连累')
+})
+
+test('缺少 CF-Connecting-IP 时回退到 socket 地址，限流仍然生效', async (t) => {
+  const { token, base: b } = await proxyWith(t, { maxFailures: 2 })
+
+  for (let i = 0; i < 3; i += 1) await fetch(`${b}/?t=${mintToken()}`)
+
+  const res = await fetch(`${b}/`, { headers: { cookie: `mp_session=${token}` } })
+  assert.equal(res.status, 404)
+})
+
+test('onWindowOpen 只在首次兑换时触发一次（Finding 8）', async (t) => {
+  const opens = []
+  const { token, base: b } = await proxyWith(t, {
+    graceMs: 60_000,
+    onWindowOpen: (e) => opens.push(e),
+  })
+
+  await fetch(`${b}/?t=${mintToken()}`, { redirect: 'manual' })
+  assert.deepEqual(opens, [], '错误令牌不开窗，也就不该有回调')
+
+  const before = Date.now()
+  await fetch(`${b}/?t=${token}`, { redirect: 'manual' })
+  await fetch(`${b}/?t=${token}`, { redirect: 'manual' })
+
+  assert.equal(opens.length, 1, '窗口只开一次，回调也只能有一次')
+  assert.ok(opens[0].at >= before && opens[0].at <= Date.now())
+  assert.equal(opens[0].until, opens[0].at + 60_000)
+})
+
+test('onWindowOpen 抛异常不影响请求本身', async (t) => {
+  const { token, base: b } = await proxyWith(t, {
+    graceMs: 60_000,
+    onWindowOpen: () => { throw new Error('状态文件写不进去') },
+  })
+
+  const res = await fetch(`${b}/?t=${token}`, { redirect: 'manual' })
+  assert.equal(res.status, 302, '记账失败绝不能把用户的请求带下水')
+})
+
 test('a valid session cookie reaches the target and surfaces 502 when it is down', async () => {
   const res = await fetch(`${base}/`, {
     headers: { cookie: `mp_session=${sessionToken}` },

@@ -1,4 +1,6 @@
-import { readFileSync, writeFileSync, rmSync, mkdirSync, existsSync, readdirSync } from 'node:fs'
+import {
+  readFileSync, writeFileSync, renameSync, rmSync, mkdirSync, existsSync, readdirSync,
+} from 'node:fs'
 import { join } from 'node:path'
 
 function stateDir() {
@@ -38,10 +40,27 @@ export function read(port) {
   }
 }
 
+// Atomic on purpose. `write` runs on every `mp capture`, not just at startup,
+// and a plain writeFileSync interrupted mid-write leaves truncated JSON —
+// which read() reports as null, list() skips, and cleanup therefore never
+// sweeps, leaving a live cloudflared orphaned with no way to find it. Writing
+// beside the target and renaming over it means a reader sees the whole old
+// file or the whole new one, never half of one. The temp name carries the pid
+// so two writers cannot collide on it.
 export function write(port, patch) {
   mkdirSync(previewsDir(), { recursive: true })
   const next = { ...(read(port) || {}), ...patch }
-  writeFileSync(statePath(port), JSON.stringify(next, null, 2), 'utf8')
+  const f = statePath(port)
+  const tmp = `${f}.${process.pid}.tmp`
+
+  try {
+    writeFileSync(tmp, JSON.stringify(next, null, 2), 'utf8')
+    renameSync(tmp, f)
+  } catch (err) {
+    rmSync(tmp, { force: true })
+    throw err
+  }
+
   return next
 }
 

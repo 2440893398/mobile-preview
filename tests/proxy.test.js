@@ -188,7 +188,13 @@ test('宽限窗口不滑动：窗口内的兑换不会重新上弦（Finding 9�
 
   await fetch(`${b}/?t=${token}`, { redirect: 'manual' }) // 开窗
   await new Promise((r) => setTimeout(r, 120))
-  await fetch(`${b}/?t=${token}`, { redirect: 'manual' }) // 不得重新上弦
+  const mid = await fetch(`${b}/?t=${token}`, { redirect: 'manual' }) // 不得重新上弦
+  // Must land inside the 200ms window (opened, then only 120ms elapsed). If the
+  // runner stalls past ~80ms here, this exchange would land outside the window
+  // instead — and there the forbidden re-arming implementation also declines to
+  // re-arm, so the final 404 below would pass for the wrong reason. Asserting
+  // 302 here makes that stall fail loudly instead of the test going vacuous.
+  assert.equal(mid.status, 302, '窗口中途的兑换应仍在窗口内放行；若失败，说明 runner 卡顿吞掉了窗口')
   await new Promise((r) => setTimeout(r, 120))
 
   const late = await fetch(`${b}/?t=${token}`, { redirect: 'manual' })
@@ -285,6 +291,30 @@ test('an expired session is 404', async () => {
   assert.equal(res.status, 404)
   const art = await fetch(`${b}/_a/${galleryToken}/shot-1.png`)
   assert.equal(art.status, 404, 'expiry must also kill artifact access')
+  expired.close()
+})
+
+test('non-finite expiresAt fails closed as already expired, not as never-expiring', async () => {
+  // Mirrors the graceMs guard: `Date.now() > expiresAt` is permanently false
+  // when expiresAt is NaN, so the TTL check would never fire, and the cookie's
+  // Max-Age would print `Max-Age=NaN` — which browsers discard per RFC 6265,
+  // silently turning the session cookie into a browser-session cookie. A
+  // non-finite expiresAt must degrade to 0 (already expired), never to "never
+  // expires".
+  const expired = createProxy({
+    galleryDir,
+    galleryToken,
+    sessionHash: hashToken(sessionToken),
+    expiresAt: NaN,
+    dev: false,
+    targetPort: 1,
+  })
+  await new Promise((r) => expired.listen(0, '127.0.0.1', r))
+  const b = `http://127.0.0.1:${expired.address().port}`
+  const res = await fetch(`${b}/`, { headers: { cookie: `mp_session=${sessionToken}` } })
+  assert.equal(res.status, 404)
+  const art = await fetch(`${b}/_a/${galleryToken}/shot-1.png`)
+  assert.equal(art.status, 404, 'non-finite expiresAt must also kill artifact access')
   expired.close()
 })
 

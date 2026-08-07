@@ -111,6 +111,14 @@ export function createProxy({
 }) {
   const galleryHash = hashToken(galleryToken)
   const failures = new Map()
+  // Fail closed. A non-finite expiresAt (a `--ttl abc` typo that made it
+  // through) would make `Date.now() > expiresAt` permanently false — the TTL
+  // check would never fire — and `Math.max(0, expiresAt - Date.now())` below
+  // would produce `Max-Age=NaN`, which browsers discard per RFC 6265, silently
+  // turning the session cookie into a browser-session cookie. Degrade to 0,
+  // i.e. already expired, so everything 404s instead. The CLI validates too,
+  // but createProxy has a second caller and this failure mode is silent.
+  const expiry = Number.isFinite(expiresAt) ? expiresAt : 0
   // Fail closed. A non-finite graceMs (a `--grace 10m` typo that made it
   // through) would set graceUntil to NaN, and nothing is ever >= NaN — the
   // window would never close and the URL would be a permanent credential.
@@ -148,7 +156,7 @@ export function createProxy({
     const url = new URL(req.url || '/', 'http://localhost')
     const pathname = url.pathname
 
-    if (Date.now() > expiresAt) return notFound(res)
+    if (Date.now() > expiry) return notFound(res)
     if (tripped(ip)) return notFound(res)
 
     const artifact = parseArtifactPath(pathname)
@@ -209,7 +217,7 @@ export function createProxy({
 
       url.searchParams.delete('t')
       const clean = pathname + (url.searchParams.toString() ? `?${url.searchParams}` : '')
-      const maxAge = Math.max(0, Math.floor((expiresAt - Date.now()) / 1000))
+      const maxAge = Math.max(0, Math.floor((expiry - Date.now()) / 1000))
       res.writeHead(302, {
         Location: clean,
         'Set-Cookie': `mp_session=${qsToken}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=${maxAge}`,

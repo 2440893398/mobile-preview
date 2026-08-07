@@ -57,7 +57,14 @@ function parseArgs(args) {
 // is ever >= NaN the grace window never closes — the session URL becomes a
 // permanent credential. `--ttl abc` makes the setTimeout fire in 1ms and the
 // daemon dies instantly. Reject at the boundary, name the flag and the value.
-function numericFlag(parsed, name, fallback) {
+//
+// Finiteness alone is not enough: `--port 99999` is finite but not a port,
+// and `mp stop --port 99999` would print "stopped port 99999" having found
+// and touched nothing — a quieter echo of the same fail-open shape. `--ttl
+// 40000` (minutes) is finite but overflows setTimeout's 2^31-1 ms limit,
+// which Node silently clamps to a 1ms timer, killing the daemon instantly.
+// integer/min/max let each call site say what "valid" means for that flag.
+function numericFlag(parsed, name, fallback, { integer = false, min = -Infinity, max = Infinity } = {}) {
   const raw = parsed[name]
   if (raw === undefined) return fallback
 
@@ -65,6 +72,17 @@ function numericFlag(parsed, name, fallback) {
   const n = Number(text)
   if (text === '' || !Number.isFinite(n)) {
     fail(`--${name} must be a number, got ${JSON.stringify(String(raw))}`)
+  }
+  if (integer && !Number.isInteger(n)) {
+    fail(`--${name} must be an integer, got ${JSON.stringify(String(raw))}`)
+  }
+  if (n < min || n > max) {
+    const bound = min === -Infinity
+      ? `at most ${max}`
+      : max === Infinity
+        ? `at least ${min}`
+        : `between ${min} and ${max}`
+    fail(`--${name} must be ${bound}, got ${JSON.stringify(String(raw))}`)
   }
   return n
 }
@@ -166,7 +184,9 @@ function activePreviews() {
 // between several: on a phone the user cannot see the machine's state, and
 // stopping the wrong service costs more than typing --port.
 function resolvePort(parsed) {
-  if (parsed.port !== undefined) return numericFlag(parsed, 'port', null)
+  if (parsed.port !== undefined) {
+    return numericFlag(parsed, 'port', null, { integer: true, min: 1, max: 65535 })
+  }
 
   const active = activePreviews()
   if (active.length === 1) return active[0].targetPort
@@ -245,10 +265,16 @@ function reportSweep(r) {
 
 async function cmdStart(args) {
   const parsed = parseArgs(args)
-  const port = numericFlag(parsed, 'port', 5173)
+  const port = numericFlag(parsed, 'port', 5173, { integer: true, min: 1, max: 65535 })
   const dev = Boolean(parsed.dev)
-  const ttl = numericFlag(parsed, 'ttl', 30)
-  const grace = numericFlag(parsed, 'grace', 10)
+  // Upper bound is 1440 minutes (24h), not the 35791min ceiling setTimeout's
+  // 2^31-1 ms limit would technically allow. A preview is for showing a
+  // running app to a phone during a work session, not something to leave
+  // exposed for weeks; a day is generous slack for that and still comfortably
+  // clears the timer overflow that made the daemon die in 1ms.
+  const ttl = numericFlag(parsed, 'ttl', 30, { integer: true, min: 1, max: 1440 })
+  // 0 is valid and means one-shot (see proxy.js) — min is 0, not 1.
+  const grace = numericFlag(parsed, 'grace', 10, { integer: true, min: 0 })
 
   sweepLegacy()
 

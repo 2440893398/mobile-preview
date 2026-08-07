@@ -354,6 +354,99 @@ test('stop --port abc 是错误，不是「停掉了端口 NaN」（Finding 5）
   rmSync(dir, { recursive: true, force: true })
 })
 
+test('stop --port 99999 拒绝越界端口，不是报「stopped port 99999」了事', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'mp-cli-'))
+
+  // 99999 是有限数，能通过旧的 numericFlag，但根本不是合法端口（上限
+  // 65535）。旧代码会一路走到底，打印 stopped port 99999、退出码 0——stop
+  // 的整个契约是「确保没有预览在跑」，什么都没找到、什么都没做却报成功，
+  // 正是 --port abc 那个 bug 的更安静的回声。
+  const res = mp(dir, ['stop', '--port', '99999'])
+
+  assert.equal(res.status, 1, 'stop 的契约是「确保没有预览在跑」，什么都没做就不能报成功')
+  assert.match(res.stderr, /--port/)
+  assert.match(res.stderr, /99999/)
+  assert.doesNotMatch(res.stdout, /stopped port 99999/)
+  rmSync(dir, { recursive: true, force: true })
+})
+
+test('start --port 超出 1-65535 范围时拒绝', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'mp-cli-'))
+
+  const res = mp(dir, ['start', '--port', '99999'])
+
+  assert.equal(res.status, 1)
+  assert.match(res.stderr, /--port/)
+  assert.match(res.stderr, /99999/)
+  rmSync(dir, { recursive: true, force: true })
+})
+
+test('start --port 0 时拒绝（下界是 1，不是 0）', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'mp-cli-'))
+
+  const res = mp(dir, ['start', '--port', '0'])
+
+  assert.equal(res.status, 1)
+  assert.match(res.stderr, /--port/)
+  rmSync(dir, { recursive: true, force: true })
+})
+
+test('start --port 带小数时拒绝，不是悄悄截断', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'mp-cli-'))
+
+  const res = mp(dir, ['start', '--port', '3.5'])
+
+  assert.equal(res.status, 1)
+  assert.match(res.stderr, /--port/)
+  rmSync(dir, { recursive: true, force: true })
+})
+
+test('start --ttl 40000（分钟）超过 setTimeout 的 2^31-1 毫秒上限时拒绝', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'mp-cli-'))
+
+  // 40000 分钟 * 60_000 = 2,400,000,000ms，超过 2^31-1（2,147,483,647）。
+  // Node 会把这种超限的 setTimeout 静默钳成 1ms 定时器，daemon 瞬间自杀——
+  // 这条命令必须在校验阶段就被拒绝，而不是走到 daemon 里才暴毙。
+  const res = mp(dir, ['start', '--port', '1', '--ttl', '40000'])
+
+  assert.equal(res.status, 1)
+  assert.match(res.stderr, /--ttl/)
+  assert.match(res.stderr, /40000/)
+  assert.doesNotMatch(res.stderr, /nothing is listening/, '应当在校验阶段就退出')
+  rmSync(dir, { recursive: true, force: true })
+})
+
+test('start --ttl 0 时拒绝（下界是 1）', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'mp-cli-'))
+
+  const res = mp(dir, ['start', '--port', '1', '--ttl', '0'])
+
+  assert.equal(res.status, 1)
+  assert.match(res.stderr, /--ttl/)
+  rmSync(dir, { recursive: true, force: true })
+})
+
+test('start --grace -1 时拒绝（下界是 0）', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'mp-cli-'))
+
+  const res = mp(dir, ['start', '--port', '1', '--grace', '-1'])
+
+  assert.equal(res.status, 1)
+  assert.match(res.stderr, /--grace/)
+  rmSync(dir, { recursive: true, force: true })
+})
+
+test('start --grace 0 依旧放行——0 是合法的一次性语义，不是要拒绝的下界', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'mp-cli-'))
+
+  const res = mp(dir, ['start', '--port', '1', '--grace', '0'])
+
+  assert.equal(res.status, 1, '端口 1 没有监听，失败是校验通过之后的事')
+  assert.doesNotMatch(res.stderr, /--grace/, 'grace 0 必须通过校验，不该被当成越界')
+  assert.match(res.stderr, /nothing is listening/, '证明确实走过了校验阶段')
+  rmSync(dir, { recursive: true, force: true })
+})
+
 test('光秃秃的 --port 是错误，绝不当作「没给 --port」去猜（Finding 5）', () => {
   const dir = mkdtempSync(join(tmpdir(), 'mp-cli-'))
   const dummy = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' })

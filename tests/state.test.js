@@ -3,14 +3,17 @@ import assert from 'node:assert/strict'
 import { mkdtempSync, mkdirSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { spawn } from 'node:child_process'
 
 const dir = mkdtempSync(join(tmpdir(), 'mp-state-'))
 process.env.MP_STATE_DIR = dir
 
 const {
-  read, write, clear, list,
+  read, readState, write, clear, list,
   statePath, tunnelLogPath, galleryDir, previewsDir, legacyStatePath,
 } = await import('../src/state.js')
+
+const STATE_MODULE_URL = new URL('../src/state.js', import.meta.url).href
 
 test('每条预览的状态文件以端口命名，放在 previews 目录下', () => {
   assert.equal(previewsDir(), join(dir, 'previews'))
@@ -132,6 +135,116 @@ test('read 遇到损坏 json 返回 null 而非抛异常', () => {
   mkdirSync(previewsDir(), { recursive: true })
   writeFileSync(statePath(5555), '{ not json', 'utf8')
   assert.equal(read(5555), null)
+})
+
+test('readState 区分「没有文件」与「文件存在但解析不了」（Gap 1）', () => {
+  // read() collapses both to null, which is exactly what let `mp start`
+  // double-spawn over a truncated slot: it saw null either way and had no
+  // way to tell "nothing here, safe to start" from "something here I could
+  // not read".
+  assert.deepEqual(readState(5556), { status: 'missing', value: null })
+
+  mkdirSync(previewsDir(), { recursive: true })
+  writeFileSync(statePath(5556), '{"tunnelPid": 4242, "daemo', 'utf8')
+  assert.deepEqual(readState(5556), { status: 'corrupt', value: null })
+
+  write(5556, { tunnelUrl: 'https://ok.trycloudflare.com' })
+  const r = readState(5556)
+  assert.equal(r.status, 'ok')
+  assert.equal(r.value.tunnelUrl, 'https://ok.trycloudflare.com')
+
+  clear(5556)
+})
+
+test('write 不留下锁文件：正常路径下锁总会被释放', () => {
+  write(6150, { a: 1 })
+  const leftover = readdirSync(previewsDir()).filter((n) => n.endsWith('.lock'))
+  assert.deepEqual(leftover, [])
+  clear(6150)
+})
+
+test('并发的 read-modify-write 会丢更新：后写者用着过期快照，把先写者刚落地的字段覆盖掉（旧行为示范，Gap 3）', () => {
+  // This is exactly the shape described in the design doc: onWindowOpen and
+  // `mp capture` each do state.write(port, patch), and write()'s own merge
+  // only protects a caller whose read happens at call time. If a writer's
+  // read predates a sibling's rename — real OS scheduling, not a caller
+  // mistake — and it renames after that sibling, its stale merge wins
+  // outright and the sibling's field is gone. No exception, no torn file:
+  // just a fully valid JSON file missing a field that was there a moment
+  // ago. This reproduces write()'s own merge formula directly (not through
+  // the lock) to show why serializing writers, not just making the rename
+  // atomic, is the part that was missing.
+  const port = 9199
+  write(port, { artifacts: [] })
+
+  const daemonRead = read(port) // "process A" (onWindowOpen) reads first
+  const captureRead = read(port) // "process B" (mp capture) reads before A writes
+
+  writeFileSync(statePath(port), JSON.stringify({ ...daemonRead, graceOpenedAt: 555 }, null, 2)) // A writes
+  writeFileSync(statePath(port), JSON.stringify({ ...captureRead, artifacts: ['shot-1.png'] }, null, 2)) // B writes from its stale snapshot, second
+
+  const final = read(port)
+  assert.equal(final.graceOpenedAt, undefined, 'B 的快照里没有 A 刚写的字段，B 的写入把它连带覆盖掉了')
+  assert.deepEqual(final.artifacts, ['shot-1.png'])
+  clear(port)
+})
+
+test('write() 用文件锁把交叠的写入串行化：谁都不会吃掉对方的字段（Gap 3）', async () => {
+  const port = 9200
+  write(port, { artifacts: [] })
+
+  // Stand in for onWindowOpen already mid-write: it has read (captured
+  // below, used later) and is about to compute+write its own patch, but has
+  // not renamed yet — represented by holding the lock write() itself would
+  // hold at that point.
+  const daemonRead = read(port)
+  const lockPath = `${statePath(port)}.lock`
+  writeFileSync(lockPath, String(process.pid), { flag: 'wx' })
+
+  // Stand in for `mp capture`: a separate process racing to add an artifact
+  // while onWindowOpen's write is still in flight. A fixed write() must
+  // block on the lock above rather than read around it.
+  const script = `
+    process.env.MP_STATE_DIR = ${JSON.stringify(dir)};
+    import(${JSON.stringify(STATE_MODULE_URL)})
+      .then((state) => { state.write(${port}, { artifacts: ['shot-1.png'] }); })
+      .catch((e) => { console.error(e); process.exitCode = 1; });
+  `
+  const child = spawn(process.execPath, ['-e', script], { stdio: ['ignore', 'ignore', 'pipe'] })
+  let childErr = ''
+  child.stderr.on('data', (d) => { childErr += d.toString() })
+  // Attached immediately, before any await: an unlocked write() can exit
+  // within a couple hundred ms (process spawn overhead dominates), and a
+  // listener attached after that has already happened would never see the
+  // event fire — a false "still waiting" that has nothing to do with the
+  // lock.
+  const childExit = new Promise((resolve, reject) => {
+    child.once('exit', (code) => (code === 0 ? resolve() : reject(new Error(`capture child exited ${code}: ${childErr}`))))
+  })
+
+  // A generous head start: long enough that an unlocked write() (which does
+  // no waiting at all) has certainly already read, merged, and renamed —
+  // real writes take microseconds; process spawn overhead dominates this.
+  await new Promise((r) => setTimeout(r, 500))
+
+  // onWindowOpen "finishes": merges its own patch onto the read it took at
+  // the top, and releases the lock. A fixed capture write(), still blocked
+  // on the lock, only reads after this point and so still sees it.
+  writeFileSync(statePath(port), JSON.stringify({ ...daemonRead, graceOpenedAt: 555 }, null, 2))
+  rmSync(lockPath, { force: true })
+
+  await Promise.race([
+    childExit,
+    new Promise((_, reject) => setTimeout(
+      () => reject(new Error('capture write never completed — stuck on the lock?')),
+      8_000,
+    )),
+  ])
+
+  const final = read(port)
+  assert.equal(final.graceOpenedAt, 555, 'daemon 的字段不能丢')
+  assert.deepEqual(final.artifacts, ['shot-1.png'], 'capture 的字段也不能丢')
+  clear(port)
 })
 
 process.on('exit', () => rmSync(dir, { recursive: true, force: true }))

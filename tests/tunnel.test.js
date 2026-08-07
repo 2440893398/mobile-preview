@@ -324,21 +324,34 @@ test('超时触发的重试会回收上一次尝试的子进程，不留活体 (
   const logPath = join(dir, 'cloudflared.log')
   const counterPath = join(dir, 'counter')
 
+  // 2000ms, not a tighter value: attempt 2 has to cold-start a node process
+  // inside this budget, and under a loaded machine that has taken >300ms. A
+  // too-tight budget times out attempt 2 as well and the test fails for a
+  // reason that has nothing to do with reclamation.
+  const timeoutMs = 2000
+
   try {
     process.env.MP_TEST_COUNTER = counterPath
 
+    const startedAt = Date.now()
     const t = await startTunnel(1234, {
       bin: 'fake-cloudflared',
       spawnFn: fakeSpawn(dir, TIMES_OUT_ONCE_THEN_SUCCEEDS),
       logPath,
-      timeoutMs: 300,
+      timeoutMs,
       tries: 2,
       retryDelayMs: 0,
     })
+    const elapsed = Date.now() - startedAt
 
     try {
       assert.equal(t.url, 'https://fake-tunnel-under-test.trycloudflare.com')
       assert.equal(readFileSync(counterPath, 'utf8'), '2', '第一次必须超时，第二次才应当发生')
+      assert.ok(
+        elapsed >= timeoutMs,
+        `第一次尝试必须是走「超时」分支结束的（唯一需要显式 killTree 的路径），` +
+        `整轮耗时应当不少于 ${timeoutMs}ms，实测 ${elapsed}ms`,
+      )
 
       const log = readFileSync(logPath, 'utf8')
       assert.match(log, /attempt 1\/2/, '第一次尝试必须真的跑过')

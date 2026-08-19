@@ -11,6 +11,10 @@ import {
 let server
 let base
 let outDir
+// null = hold the request open forever (the deterministic "not answered yet"
+// state); a number = answer after that many ms.
+let slow404Ms = null
+const pendingSlow = []
 
 before(async () => {
   server = createServer((req, res) => {
@@ -25,16 +29,21 @@ before(async () => {
       res.writeHead(404, { 'Content-Type': 'text/plain' })
       return res.end('nope')
     }
-    // Answers only after the load event has long passed, so a capture that
-    // does not wait for the network cannot have seen it.
+    // Answers only after the load event has passed, so a capture that does
+    // not wait for the network cannot have seen it. How long it holds is
+    // driven by the test rather than by a fixed delay: the control branch
+    // ("an eager capture misses this") asserts an *absence*, and any timer
+    // big enough to make that reliable also keeps a second Chromium alive
+    // that much longer, which is what started starving the full-page test.
     if (req.url === '/slow-404') {
-      // 3s, not a tighter number: the "eager capture misses it" control
-      // branch below only holds if screenshot + context.close finish inside
-      // this window, and under full-suite load 800ms was routinely blown.
+      if (slow404Ms === null) {
+        pendingSlow.push(res) // never answered; released in `after`
+        return undefined
+      }
       return setTimeout(() => {
         res.writeHead(404, { 'Content-Type': 'application/json' })
         res.end('{}')
-      }, 3000)
+      }, slow404Ms)
     }
     if (req.url === '/late') {
       res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' })
@@ -67,6 +76,7 @@ before(async () => {
 })
 
 after(() => {
+  for (const res of pendingSlow) res.destroy()
   server.close()
   rmSync(outDir, { recursive: true, force: true })
 })
@@ -309,12 +319,18 @@ test('--full-page 截整页，默认只截首屏', async () => {
 })
 
 test('--network-idle 等到请求收敛，否则慢接口的失败根本不会出现在诊断里', async () => {
+  // 第一段：服务端根本不作答（slow404Ms = null），所以「不等待就看不到」
+  // 是必然而非赛跑赢来的。
+  slow404Ms = null
   const eager = await capture({ url: `${base}/late`, outDir, waitMs: 0 })
   assert.equal(
     eager.failedRequests.some((f) => f.url.endsWith('/slow-404') && f.status === 404), false,
     '不等待时截图早于响应到达，这里本就看不到它——这正是要修的漏诊',
   )
 
+  // 第二段：答，但晚于 load。只需盖过 networkidle 自己的 500ms 静默窗口，
+  // 不必把浏览器多留在内存里好几秒。
+  slow404Ms = 300
   const patient = await capture({ url: `${base}/late`, outDir, waitMs: 0, networkIdle: true })
   assert.ok(
     patient.failedRequests.some((f) => f.url.endsWith('/slow-404') && f.status === 404),

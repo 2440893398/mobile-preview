@@ -73,8 +73,15 @@ mp.cmd start --port 8080 --dev --ttl 120 --grace 20
 When a frontend dev server calls an API at `127.0.0.1`, remember that the
 browser on the phone treats `127.0.0.1` as the phone itself. Prefer relative API
 URLs such as `/api/...` and configure the local dev server to proxy them to the
-backend. After code changes, a manual phone refresh is more reliable than HMR
-through the tunnel.
+backend.
+
+The preview does not forward WebSocket upgrades, so HMR does not work through
+it at all — this is not a flaky-connection problem to retry. After a code
+change, tell the user to reload the page on the phone.
+
+Repeat captures never overwrite each other: screenshots are numbered
+`shot-1.png`, `shot-2.png`, … within a preview's gallery, so a link already
+sent to the phone keeps showing what it showed when it was sent.
 
 ## Safety
 

@@ -1,6 +1,6 @@
 {
   "name": "mobile-preview",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Temporary authenticated preview of a local dev app, for phone-based AI workflows",
   "type": "module",
   "bin": { "mp": "./src/bin.js" },

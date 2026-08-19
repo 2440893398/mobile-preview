@@ -15,7 +15,7 @@ Use `mp start` to expose the local app, `mp capture` to collect screenshots and 
 
 ## Workflow
 
-1. Start the target app locally.
+1. Start the target app locally, detached — see the rule below.
 2. Run `mp start --port <port>`. It prints the stage it is waiting on and only
    returns a link once cloudflared has registered with the edge; `mp start --json`
    gives `{status, url, port, expiresAt}` for programmatic use.
@@ -36,6 +36,15 @@ page had console errors or failed requests.
 
 ## Rules
 
+- **Start the app detached, never as a tracked background task.** Use
+  `Start-Process -WindowStyle Hidden` on Windows or `nohup ... &` elsewhere. A
+  tracked background task holds the turn open for as long as the process lives,
+  and its exit notification — arriving hours later when the process crashes
+  unattended — wakes the conversation up and answers the original request a
+  second time. One session left a backend running that way and was resurrected
+  five and a half hours later, replaying its own first reply. If a tracked task
+  is unavoidable, stop every one of them before returning the link. `mp`'s own
+  daemon is detached with its stdio discarded and never does this.
 - **Output the preview link as a bare line.** Never wrap it in a code block,
   backticks, or any other markdown. Many phone clients render code blocks
   unselectable and unclickable, and a link the user cannot copy is a link that

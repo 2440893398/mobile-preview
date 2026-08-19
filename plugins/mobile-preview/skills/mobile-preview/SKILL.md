@@ -33,7 +33,8 @@ alias for `Move-ItemProperty`. In Command Prompt, Git Bash, and other shells,
 
 ## Workflow
 
-1. Start the target app locally and confirm its port.
+1. Start the target app locally and confirm its port. Start it detached — see
+   *Starting the app* below.
 2. Run `mp.cmd start --port <port>` for a built app, or `mp.cmd start --port <port> --dev` for a Vite/Webpack development server in PowerShell.
 3. Return the printed preview URL as a **bare line of its own**. Never wrap it
    in a code block, backticks, or any other markdown: many phone clients render
@@ -67,6 +68,31 @@ Use short lifetimes for sensitive apps, for example:
 ```powershell
 mp.cmd start --port 8080 --dev --ttl 120 --grace 20
 ```
+
+## Starting the app
+
+Step 1 is where a preview session goes wrong hours after it looked finished.
+Start the user's app as a genuinely detached process:
+
+```powershell
+Start-Process -WindowStyle Hidden -FilePath cmd.exe -ArgumentList "/c", "npm run dev" -WorkingDirectory <app-dir> -RedirectStandardOutput <log>
+```
+
+Do not start it as a tracked background task. A tracked task holds the turn open
+for as long as the process lives, and when the process finally dies — hours
+later, on a crash nobody is watching — its exit notification wakes the
+conversation back up and the original request gets answered a second time. One
+session started a backend and a dev server as tracked tasks, stopped only the
+dev server before handing over the link, and was resurrected five and a half
+hours later when the backend hit a Windows socket error. The user saw a single
+turn that had apparently "worked" for 5h28m and then re-issued its first answer.
+
+If a tracked background task is unavoidable, stop every one of them before
+returning the link. Leaving one behind is what causes the delayed replay.
+
+`mp` itself is safe here: the daemon is spawned detached with its stdio
+discarded, so the harness never tracks it and it expires quietly at the end of
+its TTL.
 
 ## Frontend development
 

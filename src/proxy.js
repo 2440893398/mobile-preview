@@ -3,6 +3,12 @@ import { createReadStream, existsSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { hashToken, isBlockedPath, parseArtifactPath, readCookie, tokenMatches } from './auth.js'
 
+// `t` is retained for links issued by older versions, but it is also used by
+// Vite as a module cache-busting timestamp. New callers can use the namespaced
+// parameter without colliding with framework or application query strings.
+export const SESSION_TOKEN_QUERY_PARAM = '__mp_token'
+const LEGACY_SESSION_TOKEN_QUERY_PARAM = 't'
+
 const MIME = {
   '.png': 'image/png',
   '.jpg': 'image/jpeg',
@@ -80,7 +86,13 @@ function forward(req, res, { targetPort }) {
     res.end('Bad Gateway')
   })
 
-  req.on('aborted', () => upstream.destroy())
+  // res 'close' fires when the client socket goes away in either phase —
+  // mid-request-body or mid-response — unlike the deprecated req 'aborted',
+  // which only ever covered the request. A phone dropping off Wi-Fi during a
+  // streamed response used to leave the upstream request running to the end.
+  res.on('close', () => {
+    if (!res.writableFinished) upstream.destroy()
+  })
   req.pipe(upstream)
 }
 
@@ -143,6 +155,15 @@ export function createProxy({
 
   function recordFailure(ip) {
     const now = Date.now()
+    // Expired entries are otherwise only dropped when their own IP comes
+    // back, so a slow scan across many IPs grew the map for the lifetime of
+    // the daemon. Sweep only past a floor: the sweep is O(size) and the
+    // common case is a handful of entries.
+    if (failures.size >= 256) {
+      for (const [key, f] of failures) {
+        if (now > f.resetAt) failures.delete(key)
+      }
+    }
     const current = failures.get(ip)
     if (!current || now > current.resetAt) {
       failures.set(ip, { count: 1, resetAt: now + failureWindowMs })
@@ -186,9 +207,19 @@ export function createProxy({
 
     if (isBlockedPath(pathname, { dev })) return notFound(res)
 
-    const qsToken = url.searchParams.get('t')
+    const cookie = readCookie(req.headers.cookie, 'mp_session')
+    const cookieValid = tokenMatches(cookie, sessionHash)
+    const tokenParam = url.searchParams.has(SESSION_TOKEN_QUERY_PARAM)
+      ? SESSION_TOKEN_QUERY_PARAM
+      : url.searchParams.has(LEGACY_SESSION_TOKEN_QUERY_PARAM)
+        ? LEGACY_SESSION_TOKEN_QUERY_PARAM
+        : null
+    const qsToken = tokenParam ? url.searchParams.get(tokenParam) : null
     if (qsToken) {
       if (!tokenMatches(qsToken, sessionHash)) {
+        // A valid session may legitimately request `?t=<timestamp>` (Vite's
+        // dev-module URLs). Preserve that query and let the app handle it.
+        if (cookieValid) return forward(req, res, { targetPort })
         recordFailure(ip)
         return notFound(res)
       }
@@ -215,7 +246,11 @@ export function createProxy({
         return notFound(res)
       }
 
-      url.searchParams.delete('t')
+      url.searchParams.delete(tokenParam)
+      // Do not leave a second, legacy token in the upstream URL if a caller
+      // supplied both forms during a migration.
+      url.searchParams.delete(SESSION_TOKEN_QUERY_PARAM)
+      url.searchParams.delete(LEGACY_SESSION_TOKEN_QUERY_PARAM)
       const clean = pathname + (url.searchParams.toString() ? `?${url.searchParams}` : '')
       const maxAge = Math.max(0, Math.floor((expiry - Date.now()) / 1000))
       res.writeHead(302, {
@@ -227,8 +262,7 @@ export function createProxy({
       return
     }
 
-    const cookie = readCookie(req.headers.cookie, 'mp_session')
-    if (!tokenMatches(cookie, sessionHash)) {
+    if (!cookieValid) {
       if (cookie) recordFailure(ip)
       return notFound(res)
     }

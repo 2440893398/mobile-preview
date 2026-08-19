@@ -5,11 +5,13 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
+  classifyTunnelFailure,
   createLogSink,
   establishBudgetMs,
   isAlive,
   parseTunnelReady,
   parseTunnelUrl,
+  stageText,
   startTunnel,
   TUNNEL_DEFAULTS,
 } from '../src/tunnel.js'
@@ -318,6 +320,120 @@ if (n === 1) {
   setInterval(() => {}, 1000)
 }
 `
+
+// 拿到 URL 但从不注册 edge——国内网络下最常见、也最伤人的一种失败：链接看着
+// 好好的，手机点开却是 530 或干脆超时。
+const URL_BUT_NEVER_REGISTERS = `
+process.stderr.write('INF Requesting new quick Tunnel on trycloudflare.com...\\n')
+process.stderr.write('INF |  https://fake-tunnel-under-test.trycloudflare.com  |\\n')
+process.stderr.write('ERR Unable to reach the origin service. i/o timeout\\n')
+setInterval(() => {}, 1000)
+`
+
+test('只拿到 URL、从未注册 edge 连接时，startTunnel 判定为失败而不是成功', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'mp-tunnel-'))
+  const logPath = join(dir, 'cloudflared.log')
+
+  await assert.rejects(
+    startTunnel(1234, {
+      bin: 'fake-cloudflared',
+      spawnFn: fakeSpawn(dir, URL_BUT_NEVER_REGISTERS),
+      logPath,
+      timeoutMs: 500,
+      tries: 1,
+      retryDelayMs: 0,
+    }),
+    (err) => {
+      // URL 已经打印出来了。若把「打印了 URL」当成就绪，用户会拿到一条
+      // 根本没人能访问的链接——这正是要杜绝的那种「成功」。
+      assert.match(err.message, /never registered an edge connection|could not reach api\.trycloudflare\.com/)
+      assert.ok(err.message.includes(logPath), '失败时必须指向 cloudflared 日志')
+      return true
+    },
+  )
+
+  rmSync(dir, { recursive: true, force: true })
+})
+
+test('classifyTunnelFailure 认出「拿到 URL 但没注册 edge」', () => {
+  const c = classifyTunnelFailure([
+    'INF |  https://x-y-z.trycloudflare.com  |',
+    'ERR failed to serve tunnel connection error="timeout"',
+  ].join('\n'))
+
+  assert.equal(c.reason, 'edge-unregistered')
+  assert.match(c.hint, /530|blocked|proxy/i, '必须给出可执行的下一步')
+})
+
+test('classifyTunnelFailure 认出根本联系不上 api.trycloudflare.com', () => {
+  const c = classifyTunnelFailure(
+    'ERR failed to request quick Tunnel: Post "https://api.trycloudflare.com/tunnel": context deadline exceeded',
+  )
+
+  assert.equal(c.reason, 'api-unreachable')
+  assert.match(c.message, /api\.trycloudflare\.com/)
+})
+
+test('classifyTunnelFailure 认出本地端口不可达，不去怪 Cloudflare', () => {
+  const c = classifyTunnelFailure(
+    'ERR failed to connect to origin: dial tcp 127.0.0.1:5173: connect: connection refused',
+  )
+
+  assert.equal(c.reason, 'origin-unreachable')
+  assert.match(c.message, /local port/i)
+})
+
+test('classifyTunnelFailure 说不出所以然时也不假装知道', () => {
+  const c = classifyTunnelFailure('INF starting up')
+  assert.equal(c.reason, 'unknown')
+  assert.match(c.hint, /log/i)
+})
+
+test('stageText 把内部阶段名翻成人话，未知阶段原样透出', () => {
+  assert.match(stageText('registering'), /edge connection/i)
+  assert.match(stageText('connecting'), /quick tunnel/i)
+  assert.equal(stageText('something-new'), 'something-new')
+})
+
+test('startTunnel 把阶段变化报给调用方，url 与 ready 是两个不同的时刻', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'mp-tunnel-'))
+  const seen = []
+
+  const t = await startTunnel(1234, {
+    bin: 'fake-cloudflared',
+    spawnFn: fakeSpawn(dir, FAKE_CLOUDFLARED),
+    logPath: join(dir, 'cloudflared.log'),
+    retryDelayMs: 0,
+    onProgress: (p) => seen.push(p.stage),
+  })
+
+  try {
+    assert.deepEqual(seen, ['connecting', 'registering', 'ready'],
+      '「拿到 url」和「注册成功」必须分别报出来，否则等待期间无从判断卡在哪一步')
+  } finally {
+    process.kill(t.pid)
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('onProgress 抛异常也不能拖垮隧道启动', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'mp-tunnel-'))
+
+  const t = await startTunnel(1234, {
+    bin: 'fake-cloudflared',
+    spawnFn: fakeSpawn(dir, FAKE_CLOUDFLARED),
+    logPath: join(dir, 'cloudflared.log'),
+    retryDelayMs: 0,
+    onProgress: () => { throw new Error('状态文件写不进去') },
+  })
+
+  try {
+    assert.equal(t.url, 'https://fake-tunnel-under-test.trycloudflare.com')
+  } finally {
+    process.kill(t.pid)
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
 
 test('超时触发的重试会回收上一次尝试的子进程，不留活体 (Finding 2)', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'mp-tunnel-'))

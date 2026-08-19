@@ -1,9 +1,12 @@
 {
   "name": "mobile-preview",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Temporary authenticated preview of a local dev app, for phone-based AI workflows",
   "type": "module",
   "bin": { "mp": "./src/bin.js" },
+  "exports": {
+    "./doctor": "./src/doctor.js"
+  },
   "scripts": { "test": "node --test" },
   "engines": { "node": ">=20" },
   "dependencies": { "playwright": "^1.49.0" },

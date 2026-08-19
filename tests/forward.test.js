@@ -58,6 +58,17 @@ test('GET is forwarded with path preserved and response passed back', async () =
   s.close()
 })
 
+test('Vite cache-busting `t` query is forwarded for a valid session', async () => {
+  const s = await proxyFor(true)
+  const b = `http://127.0.0.1:${s.address().port}`
+  const res = await fetch(`${b}/src/main.ts?t=1786108570463`, {
+    headers: { cookie: `mp_session=${sessionToken}` },
+  })
+  assert.equal(res.status, 200)
+  assert.equal(await res.text(), 'GET /src/main.ts?t=1786108570463')
+  s.close()
+})
+
 test('POST body is forwarded intact', async () => {
   const s = await proxyFor(false)
   const b = `http://127.0.0.1:${s.address().port}`

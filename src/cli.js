@@ -6,7 +6,10 @@ import * as state from './state.js'
 import {
   cleanupAll, cleanupLegacy, cleanupStale, previewHealth, sweepCorruptSlots,
 } from './daemon.js'
-import { establishBudgetMs } from './tunnel.js'
+import { establishBudgetMs, isAlive, stageText } from './tunnel.js'
+import { SESSION_TOKEN_QUERY_PARAM } from './proxy.js'
+import { COMMANDS, VERSION, renderCommandHelp, renderHelp } from './usage.js'
+import { LOCALHOST_HARDCODE_HINT, formatDoctor, runChecks } from './doctor.js'
 
 // Covers daemon process startup, the proxy's listen() before it even calls
 // startTunnel, and the final state-file write — none of which are part of
@@ -16,39 +19,79 @@ const DAEMON_STARTUP_SLACK_MS = 10_000
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 
-const VALUE_FLAGS = new Set(['--port', '--ttl', '--steps', '--device', '--grace'])
+// stdout belongs to the machine-readable payload when --json is on. Every
+// human-facing line moves to stderr then, so a caller can pipe stdout straight
+// into a parser without filtering prose out of it first.
+let jsonMode = false
 
-function fail(msg) {
+function note(msg) {
+  if (jsonMode) console.error(msg)
+  else console.log(msg)
+}
+
+function emitJson(payload) {
+  console.log(JSON.stringify(payload, null, 2))
+}
+
+function fail(msg, extra = null) {
+  if (jsonMode) emitJson({ status: 'error', error: msg, ...extra })
   console.error(msg)
   process.exit(1)
 }
 
-function parseArgs(args) {
+// Rejects anything the command does not declare. A `--devv` typo used to be
+// swallowed as a truthy boolean nobody read, so the command ran with the
+// opposite of what was asked for and said nothing about it.
+function parseArgs(args, commandName) {
+  const spec = COMMANDS[commandName]
+  const flags = spec.flags
   const positionals = []
   const out = { positionals }
 
   for (let i = 0; i < args.length; i += 1) {
     const a = args[i]
-    if (a === '--dev' || a === '--video') {
-      out[a.slice(2)] = true
+
+    if (a === '--help' || a === '-h') {
+      out.help = true
       continue
     }
-    if (VALUE_FLAGS.has(a)) {
-      const v = args[i + 1]
-      // A value flag with nothing after it used to record `undefined`, which
-      // is indistinguishable from "flag absent" — so `mp stop --port` silently
-      // auto-resolved a preview the user never named. Refuse instead: the
-      // whole port-resolution design rests on never guessing.
-      if (v === undefined || v.startsWith('--')) fail(`${a} needs a value`)
-      out[a.slice(2)] = v
-      i += 1
+
+    if (!a.startsWith('--')) {
+      positionals.push(a)
       continue
     }
-    if (a.startsWith('--')) {
-      out[a.slice(2)] = true
+
+    const eq = a.indexOf('=')
+    const name = eq === -1 ? a.slice(2) : a.slice(2, eq)
+    const inline = eq === -1 ? null : a.slice(eq + 1)
+    const def = flags[name]
+
+    if (!def) {
+      const known = Object.keys(flags).map((f) => `--${f}`).join(', ')
+      fail(`unknown option --${name} for \`mp ${commandName}\`. It accepts: ${known || '(no options)'}. `
+        + `Run \`mp ${commandName} --help\`.`)
+    }
+
+    if (!def.value) {
+      if (inline !== null) fail(`--${name} is a switch and takes no value, got --${name}=${inline}`)
+      out[name] = true
       continue
     }
-    positionals.push(a)
+
+    const v = inline !== null ? inline : args[i + 1]
+    // A value flag with nothing after it used to record `undefined`, which
+    // is indistinguishable from "flag absent" — so `mp stop --port` silently
+    // auto-resolved a preview the user never named. Refuse instead: the
+    // whole port-resolution design rests on never guessing.
+    if (v === undefined || (inline === null && v.startsWith('--'))) fail(`--${name} needs a value`)
+    out[name] = v
+    if (inline === null) i += 1
+  }
+
+  const max = spec.maxPositionals ?? 0
+  if (positionals.length > max) {
+    fail(`unexpected argument ${JSON.stringify(positionals[max])} for \`mp ${commandName}\`. `
+      + `Run \`mp ${commandName} --help\`.`)
   }
 
   return out
@@ -100,6 +143,27 @@ async function loadSteps(stepPath) {
   return fn
 }
 
+// The link handed to the phone. `__mp_token` rather than the older `t`: Vite
+// uses `?t=<timestamp>` for its own module cache-busting, so a bare `t` put the
+// preview's auth parameter and the dev server's own query in the same
+// namespace — which is how a dev-mode preview ended up rendering a blank page.
+// The proxy still accepts `?t=` so links already in someone's chat history
+// keep working.
+export function previewUrl({ tunnelUrl, sessionToken }) {
+  return `${tunnelUrl}/?${SESSION_TOKEN_QUERY_PARAM}=${sessionToken}`
+}
+
+function formatConsoleError(e) {
+  if (typeof e === 'string') return e
+  const where = e.url ? ` (${e.url}${e.line ? `:${e.line}` : ''})` : ''
+  return `${e.text}${where}`
+}
+
+function formatFailedRequest(f) {
+  const type = f.resourceType ? ` [${f.resourceType}]` : ''
+  return `  - ${f.status ?? f.error}${type} ${f.url}`
+}
+
 export function formatCapture({
   tunnelUrl,
   galleryToken,
@@ -117,30 +181,43 @@ export function formatCapture({
   }
   if (video) lines.push(`[${video}](${base}/${video})`)
 
+  // Split by severity rather than lumping everything together: a missing
+  // favicon and a missing entry script both print "404" and only one of them
+  // explains a blank page.
+  const errors = failedRequests.filter((f) => f.severity !== 'warning')
+  const warnings = failedRequests.filter((f) => f.severity === 'warning')
+
   lines.push('')
-  if (consoleErrors.length === 0 && failedRequests.length === 0) {
+  if (consoleErrors.length === 0 && errors.length === 0) {
     lines.push('Page loaded clean: no console errors, no failed requests.')
   } else {
     if (consoleErrors.length) {
       lines.push(`CONSOLE ERRORS (${consoleErrors.length}):`)
-      for (const e of consoleErrors) lines.push(`  - ${e}`)
+      for (const e of consoleErrors) lines.push(`  - ${formatConsoleError(e)}`)
     }
-    if (failedRequests.length) {
-      lines.push(`FAILED REQUESTS (${failedRequests.length}):`)
-      for (const f of failedRequests) lines.push(`  - ${f.status ?? f.error} ${f.url}`)
+    if (errors.length) {
+      lines.push(`FAILED REQUESTS (${errors.length}):`)
+      for (const f of errors) lines.push(formatFailedRequest(f))
     }
   }
+
+  if (warnings.length) {
+    lines.push(`IGNORABLE (${warnings.length}) — favicons, source maps and the like:`)
+    for (const f of warnings) lines.push(formatFailedRequest(f))
+  }
+
   return lines.join('\n')
 }
 
 export function formatStart({ tunnelUrl, sessionToken, expiresAt, dev }) {
   const mins = Math.round((expiresAt - Date.now()) / 60_000)
   const lines = [
-    `preview: ${tunnelUrl}/?t=${sessionToken}`,
+    `preview: ${previewUrl({ tunnelUrl, sessionToken })}`,
     `expires in ${mins} min`,
   ]
   if (dev) {
-    lines.push('dev mode: dev server exposed. HMR is not guaranteed over the tunnel.')
+    lines.push('dev mode: dev server exposed. WebSockets are not proxied, so Vite HMR '
+      + 'does not work through the preview — reload the page to pick up changes.')
   }
   return lines.join('\n')
 }
@@ -165,7 +242,7 @@ export function formatStatus(previews, now = Date.now()) {
     // never arrives. See skill/SKILL.md.
     const lines = [
       `port ${s.targetPort}:`,
-      `${s.tunnelUrl}/?t=${s.sessionToken}`,
+      previewUrl(s),
       `  expires in ${mins} min, artifacts: ${(s.artifacts || []).length}`,
     ]
     if (windowClosed(s, now)) {
@@ -176,6 +253,20 @@ export function formatStatus(previews, now = Date.now()) {
     }
     return lines.join('\n')
   }).join('\n\n')
+}
+
+function startPayload(s, port) {
+  return {
+    status: 'ready',
+    url: previewUrl(s),
+    tunnelUrl: s.tunnelUrl,
+    sessionToken: s.sessionToken,
+    galleryToken: s.galleryToken,
+    port,
+    expiresAt: s.expiresAt,
+    expiresInMinutes: Math.round((s.expiresAt - Date.now()) / 60_000),
+    dev: Boolean(s.dev),
+  }
 }
 
 function activePreviews() {
@@ -227,29 +318,87 @@ export function tunnelWaitBudgetMs() {
   return establishBudgetMs() + DAEMON_STARTUP_SLACK_MS
 }
 
-// `stopped` lets the caller cut the wait short. The budget is 136s — right
-// for the retry case, far too long to sit silent when the daemon died in its
-// first second and its stdio went to /dev/null. A daemon writes its state
-// file synchronously before exiting, so an exit observed at the top of an
-// iteration is always preceded by a poll that could already see the result.
-async function waitForState(port, predicate, {
-  timeoutMs = tunnelWaitBudgetMs(),
-  stopped = () => false,
-} = {}) {
+function stageLine(s) {
+  if (!s?.stage) return null
+  const attempt = s.attempt && s.tries ? ` (attempt ${s.attempt}/${s.tries})` : ''
+  return `... ${stageText(s.stage)}${attempt}`
+}
+
+// Waits for the daemon to reach a terminal outcome, narrating the stages it
+// passes through on the way. The narration is the point: the daemon is spawned
+// detached with stdio pointed at nowhere, so before it recorded its stage the
+// only thing a user saw during a slow establishment was a silent prompt for up
+// to 136 seconds — indistinguishable from a hang, and the reason `mp start`
+// got a reputation for "sometimes printing nothing".
+//
+// `stopped` lets the caller cut the wait short. A daemon writes its state file
+// synchronously before exiting, so an exit observed at the top of an iteration
+// is always preceded by a poll that could already see the result; the state is
+// re-read once more on the way out to close the remaining sliver.
+async function awaitTunnel(port, { stopped = () => false, timeoutMs = tunnelWaitBudgetMs() } = {}) {
   const deadline = Date.now() + timeoutMs
+  let announced = null
+  let latest = null
+
   for (;;) {
     const s = state.read(port)
-    if (s && predicate(s)) return s
-    if (stopped()) return null
-    if (Date.now() >= deadline) return null
+    if (s) {
+      latest = s
+      if (s.tunnelUrl || s.error) return { state: s, outcome: s.error ? 'error' : 'ready' }
+
+      const key = `${s.stage}:${s.attempt ?? ''}`
+      if (s.stage && key !== announced) {
+        announced = key
+        const line = stageLine(s)
+        if (line) note(line)
+      }
+    }
+
+    if (stopped()) return { state: state.read(port) || latest, outcome: 'stopped' }
+    if (Date.now() >= deadline) return { state: latest, outcome: 'timeout' }
     await new Promise((r) => setTimeout(r, 300))
   }
+}
+
+// "timed out waiting for the tunnel" on its own was the whole message, and it
+// left the user with no way to tell a network that will never work from one
+// that needed another twenty seconds — with a daemon still running behind it
+// either way. Name the stage it reached, whether anything is still trying, and
+// where to read the rest.
+export function formatStartTimeout({
+  port, latest, budgetMs, logPath, daemonAlive,
+}) {
+  const attempt = latest?.attempt ? ` (attempt ${latest.attempt}/${latest.tries})` : ''
+  return [
+    `timed out after ${Math.round(budgetMs / 1000)}s waiting for the tunnel on port ${port}.`,
+    `last stage: ${stageText(latest?.stage)}${attempt}`,
+    daemonAlive
+      ? `the daemon (pid ${latest.daemonPid}) is still running — run \`mp status\` shortly to see if it `
+        + `got there, or \`mp stop --port ${port}\` to give up on it.`
+      : `no daemon is running for port ${port} any more — run \`mp start --port ${port}\` again.`,
+    `cloudflared output: ${logPath}`,
+  ].join('\n')
+}
+
+function failTimeout(port, latest) {
+  const alive = Boolean(latest?.daemonPid && isAlive(latest.daemonPid))
+  const logPath = state.tunnelLogPath(port)
+
+  fail(formatStartTimeout({
+    port, latest, budgetMs: tunnelWaitBudgetMs(), logPath, daemonAlive: alive,
+  }), {
+    status: alive ? 'starting' : 'error',
+    port,
+    stage: latest?.stage ?? null,
+    daemonPid: alive ? latest.daemonPid : null,
+    logPath,
+  })
 }
 
 function sweepLegacy() {
   const legacy = cleanupLegacy()
   if (legacy.found) {
-    console.log(`cleaned up a legacy single-slot state file (${legacy.killed} process tree(s) terminated)`)
+    note(`cleaned up a legacy single-slot state file (${legacy.killed} process tree(s) terminated)`)
   }
 }
 
@@ -263,7 +412,7 @@ function sweepLegacy() {
 function sweepCorrupt() {
   const { unreadable } = sweepCorruptSlots()
   if (unreadable.length) {
-    console.log(
+    note(
       `warning: removed ${unreadable.length} unreadable state file(s) `
       + `(port(s) ${unreadable.join(', ')}); any cloudflared they owned may still be running`,
     )
@@ -271,19 +420,56 @@ function sweepCorrupt() {
 }
 
 function reportSweep(r) {
-  console.log(`stopped (${r.killed} process tree(s) terminated)`)
+  note(`stopped (${r.killed} process tree(s) terminated)`)
   if (r.unreadable?.length) {
     // Their recorded pids were unreadable, so whatever they owned could not be
     // killed. Saying "stopped" and nothing else would be a lie.
-    console.log(
+    note(
       `warning: removed ${r.unreadable.length} unreadable state file(s) `
       + `(port(s) ${r.unreadable.join(', ')}); any cloudflared they owned may still be running`,
     )
   }
 }
 
+function reportReady(s, port) {
+  if (jsonMode) {
+    emitJson(startPayload(s, port))
+    return
+  }
+  console.log(formatStart(startView(s)))
+}
+
+// A record that belongs to a daemon which is up but has not got a tunnel yet.
+// Deliberately not `active`: it carries no tokens, so nothing can print a link
+// from it — but it does carry a live daemonPid, which is what lets a second
+// `mp start` attach instead of spawning a rival into the same slot.
+function isEstablishing(s) {
+  return Boolean(s && !s.error && !s.tunnelUrl && s.daemonPid && isAlive(s.daemonPid))
+}
+
+async function settleStart(port, { stopped, onStopped }) {
+  const { state: s, outcome } = await awaitTunnel(port, { stopped })
+
+  if (outcome === 'ready') {
+    reportReady(s, port)
+    return
+  }
+  if (outcome === 'error') {
+    const detail = { port, reason: s.errorReason, logPath: s.logPath ?? state.tunnelLogPath(port) }
+    state.clear(port)
+    fail(s.error, detail)
+  }
+  if (outcome === 'stopped') {
+    onStopped(s)
+    return
+  }
+  failTimeout(port, s)
+}
+
 async function cmdStart(args) {
-  const parsed = parseArgs(args)
+  const parsed = parseArgs(args, 'start')
+  if (parsed.help) return console.log(renderCommandHelp('start'))
+
   const port = numericFlag(parsed, 'port', 5173, { integer: true, min: 1, max: 65535 })
   const dev = Boolean(parsed.dev)
   // Upper bound is 1440 minutes (24h), not the 35791min ceiling setTimeout's
@@ -307,25 +493,46 @@ async function cmdStart(args) {
     // (they're the 2nd and 3rd keys write() puts down) — just not parseably
     // — so say they could not be parsed, not that they are gone.
     const f = state.statePath(port)
-    console.error(
+    fail(
       `preview state for port ${port} is corrupt: ${f} could not be parsed as JSON. `
       + 'Its recorded pids could not be read, so any process it referenced cannot be '
       + 'reclaimed automatically. Run `mp stop --all` (sweeps corrupt slots) or delete the file.',
+      { port },
     )
-    process.exit(1)
   }
 
   const existing = existingState.value
   if (previewHealth(existing).active) {
-    console.log(formatStart(startView(existing)))
+    // The establishing branch below says this out loud; the active branch
+    // used to swallow the flags silently — `mp start --ttl 120` against an
+    // already-running preview printed the old link and nothing else.
+    if (parsed.ttl !== undefined || parsed.grace !== undefined || parsed.dev) {
+      note(`a preview for port ${port} is already active; its original --ttl/--grace/--dev `
+        + 'stay in effect. `mp stop` first to change them.')
+    }
+    reportReady(existing, port)
+    return
+  }
+
+  if (isEstablishing(existing)) {
+    const daemonPid = existing.daemonPid
+    note(`a preview daemon for port ${port} is already starting (pid ${daemonPid}); waiting for it`)
+    note('its --ttl/--grace/--dev are the ones it was started with; `mp stop` first to change them')
+    await settleStart(port, {
+      stopped: () => !isAlive(daemonPid),
+      onStopped: (s) => {
+        if (s?.error) fail(s.error, { port, reason: s.errorReason, logPath: s.logPath })
+        fail(`the preview daemon for port ${port} exited before the tunnel came up. `
+          + `See ${state.tunnelLogPath(port)}.`, { port })
+      },
+    })
     return
   }
 
   if (existing) cleanupStale(port)
 
   if (!(await portIsOpen(port))) {
-    console.error(`nothing is listening on 127.0.0.1:${port}. Start your app first.`)
-    process.exit(1)
+    fail(`nothing is listening on 127.0.0.1:${port}. Start your app first.`, { port })
   }
 
   const galleryDir = state.galleryDir(port)
@@ -341,46 +548,65 @@ async function cmdStart(args) {
   let exitCode = null
   child.once('exit', (code) => { exitCode = code ?? -1 })
 
-  const s = await waitForState(port, (x) => x.tunnelUrl || x.error, {
+  await settleStart(port, {
     stopped: () => exitCode !== null,
+    onStopped: (s) => {
+      if (s?.error) {
+        const detail = { port, reason: s.errorReason, logPath: s.logPath ?? state.tunnelLogPath(port) }
+        state.clear(port)
+        fail(s.error, detail)
+      }
+      fail(`the preview daemon exited (code ${exitCode}) before the tunnel came up`, { port })
+    },
   })
-  if (!s) {
-    console.error(exitCode !== null
-      ? `the preview daemon exited (code ${exitCode}) before the tunnel came up`
-      : 'timed out waiting for the tunnel')
-    process.exit(1)
-  }
-  if (s.error) {
-    console.error(s.error)
-    state.clear(port)
-    process.exit(1)
-  }
-
-  console.log(formatStart(startView(s)))
 }
 
 async function cmdCapture(args) {
-  const parsed = parseArgs(args)
+  const parsed = parseArgs(args, 'capture')
+  if (parsed.help) return console.log(renderCommandHelp('capture'))
+
   const port = resolvePort(parsed)
   if (port === null) {
-    console.error('no active preview. Run `mp start` first.')
-    process.exit(1)
+    fail('no active preview. Run `mp start` first.')
   }
 
   const s = state.read(port)
   if (!previewHealth(s).active) {
     if (s) cleanupStale(port)
-    console.error('no active preview. Run `mp start` first.')
-    process.exit(1)
+    fail('no active preview. Run `mp start` first.')
   }
 
   const url = parsed.positionals[0] || `http://127.0.0.1:${s.targetPort}/`
   const video = Boolean(parsed.video)
   const steps = await loadSteps(parsed.steps)
-  const { capture } = await import('./capture.js')
+  const waitMs = numericFlag(parsed, 'wait-ms', 500, { integer: true, min: 0, max: 600_000 })
+  const { capture, knownDevice } = await import('./capture.js')
 
-  const r = await capture({ url, outDir: s.galleryDir, steps, video, deviceName: parsed.device })
-  state.write(port, { artifacts: [...(s.artifacts || []), ...r.shots, r.video].filter(Boolean) })
+  // An unrecognised --device used to fall back to the iPhone 13 without a
+  // word, so a capture taken "on a Pixel 7" was quietly an iPhone one.
+  if (parsed.device !== undefined && !knownDevice(parsed.device)) {
+    fail(`unknown --device ${JSON.stringify(parsed.device)}. `
+      + 'Use a Playwright device profile name, e.g. "iPhone 13", "Pixel 7", "Galaxy S9+".')
+  }
+
+  const r = await capture({
+    url,
+    outDir: s.galleryDir,
+    steps,
+    video,
+    deviceName: parsed.device,
+    waitFor: parsed['wait-for'] ?? null,
+    waitMs,
+    networkIdle: Boolean(parsed['network-idle']),
+    fullPage: Boolean(parsed['full-page']),
+  })
+  // Functional patch: the append is computed inside the state lock from a
+  // fresh read, not from the `s` snapshot taken before the capture ran —
+  // two concurrent captures would otherwise each write a list missing the
+  // other's artifacts.
+  state.write(port, (cur) => ({
+    artifacts: [...(cur.artifacts || []), ...r.shots, r.video].filter(Boolean),
+  }))
 
   console.log(formatCapture({
     tunnelUrl: s.tunnelUrl,
@@ -390,9 +616,35 @@ async function cmdCapture(args) {
     consoleErrors: r.consoleErrors,
     failedRequests: r.failedRequests,
   }))
+
+  if (parsed.strict) {
+    const errors = r.failedRequests.filter((f) => f.severity !== 'warning')
+    if (errors.length || r.consoleErrors.length) {
+      console.error(
+        `--strict: ${errors.length} failed request(s) and ${r.consoleErrors.length} console error(s) on ${url}`,
+      )
+      process.exit(1)
+    }
+  }
 }
 
-function cmdStatus() {
+function statusView(s) {
+  return {
+    port: s.targetPort,
+    url: previewUrl(s),
+    tunnelUrl: s.tunnelUrl,
+    expiresAt: s.expiresAt,
+    expiresInMinutes: Math.round((s.expiresAt - Date.now()) / 60_000),
+    dev: Boolean(s.dev),
+    artifacts: s.artifacts || [],
+    exchangeable: !windowClosed(s, Date.now()),
+  }
+}
+
+function cmdStatus(args) {
+  const parsed = parseArgs(args, 'status')
+  if (parsed.help) return console.log(renderCommandHelp('status'))
+
   sweepLegacy()
   sweepCorrupt()
 
@@ -401,7 +653,7 @@ function cmdStatus() {
 
   for (const s of all) {
     if (s.error) {
-      console.log(`port ${s.targetPort}: ${s.error}`)
+      note(`port ${s.targetPort}: ${s.error}`)
       continue
     }
 
@@ -411,16 +663,31 @@ function cmdStatus() {
       continue
     }
 
+    // A daemon that is still establishing its tunnel is neither active nor
+    // stale: sweeping it here would kill the very startup the user is waiting
+    // on after `mp start` timed out and told them to check back.
+    if (isEstablishing(s)) {
+      note(`port ${s.targetPort}: still starting — ${stageText(s.stage)}`
+        + `${s.attempt ? ` (attempt ${s.attempt}/${s.tries})` : ''}`)
+      continue
+    }
+
     const why = health.reason === 'expired' ? 'has expired' : 'is stale'
-    console.log(`port ${s.targetPort}: previous preview ${why}; cleaning up`)
+    note(`port ${s.targetPort}: previous preview ${why}; cleaning up`)
     cleanupStale(s.targetPort)
+  }
+
+  if (parsed.json) {
+    emitJson(live.map(statusView))
+    return
   }
 
   console.log(formatStatus(live))
 }
 
 function cmdStop(args) {
-  const parsed = parseArgs(args)
+  const parsed = parseArgs(args, 'stop')
+  if (parsed.help) return console.log(renderCommandHelp('stop'))
 
   // Unconditionally, not just on --all or the no-preview branch: spec §8 says
   // stop handles a leftover pre-multi-slot state.json, and the case that
@@ -454,21 +721,50 @@ function cmdStop(args) {
   }
 
   const r = cleanupStale(port)
-  console.log(`stopped port ${port} (${r.killed} process tree(s) terminated)`)
+  note(`stopped port ${port} (${r.killed} process tree(s) terminated)`)
+}
+
+function cmdDoctor(args) {
+  const parsed = parseArgs(args, 'doctor')
+  if (parsed.help) return console.log(renderCommandHelp('doctor'))
+
+  const checks = runChecks()
+
+  if (parsed.json) emitJson(checks)
+  else console.log(`${formatDoctor(checks)}\n\n${LOCALHOST_HARDCODE_HINT}`)
+
+  if (checks.some((c) => !c.ok && !c.optional)) process.exit(1)
 }
 
 export async function main(argv) {
   const [cmd, ...rest] = argv
+
+  if (cmd === undefined || cmd === '--help' || cmd === '-h' || cmd === 'help') {
+    console.log(renderHelp())
+    return
+  }
+  if (cmd === '--version' || cmd === '-v' || cmd === 'version') {
+    console.log(VERSION)
+    return
+  }
+
   const table = {
     start: cmdStart,
     capture: cmdCapture,
     status: cmdStatus,
     stop: cmdStop,
+    doctor: cmdDoctor,
   }
   const fn = table[cmd]
   if (!fn) {
-    console.error('usage: mp <start|capture|status|stop>')
+    console.error(`unknown command ${JSON.stringify(cmd)}.\n`)
+    console.error(renderHelp())
     process.exit(1)
   }
+
+  // Set before dispatch so a parse failure in a --json invocation still emits
+  // a parseable object rather than only prose on stderr.
+  jsonMode = rest.includes('--json') && Boolean(COMMANDS[cmd].flags.json)
+
   await fn(rest)
 }

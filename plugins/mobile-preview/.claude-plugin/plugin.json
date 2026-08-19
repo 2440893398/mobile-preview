@@ -1,0 +1,11 @@
+{
+  "name": "mobile-preview",
+  "version": "0.2.0",
+  "description": "Expose a local web app through a temporary authenticated phone preview.",
+  "author": {
+    "name": "mobile-preview contributors"
+  },
+  "license": "MIT",
+  "keywords": ["mobile", "preview", "cloudflare", "tunnel", "screenshots"],
+  "homepage": "https://github.com/ch451314/mobile-preview"
+}

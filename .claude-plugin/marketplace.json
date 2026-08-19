@@ -1,0 +1,18 @@
+{
+  "name": "mobile-preview-local",
+  "description": "Local marketplace for the mobile-preview plugin, installed straight from this checkout",
+  "owner": {
+    "name": "mobile-preview contributors"
+  },
+  "plugins": [
+    {
+      "name": "mobile-preview",
+      "description": "Expose a local web app through a temporary authenticated phone preview, capture mobile screenshots, and clean up the tunnel afterwards.",
+      "version": "0.2.0",
+      "source": "./plugins/mobile-preview",
+      "author": {
+        "name": "mobile-preview contributors"
+      }
+    }
+  ]
+}

@@ -50,6 +50,25 @@ test('write 是合并而非替换', () => {
   assert.equal(s.tunnelUrl, 'https://a.trycloudflare.com')
 })
 
+test('write 接受函数式补丁：在锁内基于最新状态计算，防止同字段的读改写丢更新', () => {
+  const port = 4517
+  write(port, { artifacts: ['a.png'] })
+  // 模拟"快照过期"：函数式补丁不该依赖调用方手里的旧快照
+  write(port, { artifacts: ['a.png', 'b.png'] })
+  write(port, (cur) => ({ artifacts: [...cur.artifacts, 'c.png'] }))
+  assert.deepEqual(read(port).artifacts, ['a.png', 'b.png', 'c.png'])
+  clear(port)
+})
+
+test('write 拒绝写到 corrupt 槽上，而不是把它"重生"成只含补丁的新记录', () => {
+  const port = 4518
+  mkdirSync(previewsDir(), { recursive: true })
+  writeFileSync(statePath(port), '{ not json')
+  assert.throws(() => write(port, { artifacts: [] }), /corrupt/)
+  assert.equal(readState(port).status, 'corrupt', '文件必须原样留给 sweep 处理')
+  rmSync(statePath(port), { force: true })
+})
+
 test('两个端口的状态互不干扰', () => {
   write(3000, { tunnelUrl: 'https://b.trycloudflare.com' })
   assert.equal(read(4321).tunnelUrl, 'https://a.trycloudflare.com')
@@ -148,6 +167,11 @@ test('readState 区分「没有文件」与「文件存在但解析不了」（G
   writeFileSync(statePath(5556), '{"tunnelPid": 4242, "daemo', 'utf8')
   assert.deepEqual(readState(5556), { status: 'corrupt', value: null })
 
+  // write 拒绝在 corrupt 槽上落笔（否则会把带 pid 的残档静默重生成
+  // 只含补丁的新记录）；清掉之后才能正常写。
+  assert.throws(() => write(5556, { tunnelUrl: 'https://ok.trycloudflare.com' }), /corrupt/)
+
+  clear(5556)
   write(5556, { tunnelUrl: 'https://ok.trycloudflare.com' })
   const r = readState(5556)
   assert.equal(r.status, 'ok')

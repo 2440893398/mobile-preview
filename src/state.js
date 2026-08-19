@@ -122,12 +122,30 @@ function acquireLock(port) {
 // with no error, no warning, nothing torn for read() to catch. The rename
 // alone only rules out a half-written file, not a fully-written one that
 // silently overwrote a sibling's change.
+//
+// The lock protects *different* fields merged from concurrent writers. A
+// patch computed from a read taken before the lock still loses same-field
+// updates — appending to `artifacts` is exactly that shape — so `patch` may
+// be a function: it runs inside the lock, on the freshly re-read state, and
+// returns the fields to merge.
+//
+// Refuses to write over a corrupt slot rather than resurrecting it: merging
+// over `read() || {}` would quietly turn unparseable JSON — pids and all —
+// into a fresh record containing only this patch.
 export function write(port, patch) {
   mkdirSync(previewsDir(), { recursive: true })
   const lockPath = acquireLock(port)
 
   try {
-    const next = { ...(read(port) || {}), ...patch }
+    const { status, value } = readState(port)
+    if (status === 'corrupt') {
+      throw new Error(
+        `preview state for port ${port} is corrupt (${statePath(port)}); `
+        + 'refusing to overwrite it. Run `mp stop --all` or delete the file.',
+      )
+    }
+    const base = value || {}
+    const next = { ...base, ...(typeof patch === 'function' ? patch(base) : patch) }
     const f = statePath(port)
     const tmp = `${f}.${process.pid}.tmp`
 

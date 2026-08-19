@@ -4,6 +4,7 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createServer } from 'node:net'
+import { createServer as createHttpServer } from 'node:http'
 import { spawn, spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import { formatCapture, formatStart, formatStatus } from '../src/cli.js'
@@ -45,6 +46,57 @@ test('formatCapture warns loudly when console errors exist', () => {
   assert.match(out, /FAILED REQUESTS \(1\)/)
 })
 
+test('formatCapture includes resource type in failed request diagnostics', () => {
+  const out = formatCapture({
+    tunnelUrl: URL_, galleryToken: TOK, shots: [], video: null,
+    consoleErrors: [],
+    failedRequests: [{ url: `${URL_}/src/main.ts?t=123`, status: 404, resourceType: 'script' }],
+  })
+  assert.match(out, /404 \[script\] https:\/\/tidy-pear\.trycloudflare\.com\/src\/main\.ts\?t=123/)
+})
+
+test('formatCapture 把 favicon 这类噪音单列，不和真正的错误混在一起', () => {
+  const out = formatCapture({
+    tunnelUrl: URL_,
+    galleryToken: TOK,
+    shots: [],
+    video: null,
+    consoleErrors: [],
+    failedRequests: [
+      { url: `${URL_}/src/main.tsx`, status: 404, resourceType: 'script', severity: 'error' },
+      { url: `${URL_}/favicon.ico`, status: 404, resourceType: 'image', severity: 'warning' },
+    ],
+  })
+
+  assert.match(out, /FAILED REQUESTS \(1\)/, '真正的错误只算那一条')
+  assert.match(out, /IGNORABLE \(1\)/)
+  const failedBlock = out.slice(out.indexOf('FAILED REQUESTS'), out.indexOf('IGNORABLE'))
+  assert.doesNotMatch(failedBlock, /favicon/, 'favicon 不该出现在错误区里')
+})
+
+test('formatCapture 带出 console 错误的来源位置', () => {
+  const out = formatCapture({
+    tunnelUrl: URL_,
+    galleryToken: TOK,
+    shots: [],
+    video: null,
+    consoleErrors: [{ text: 'TypeError: x is not a function', url: `${URL_}/app.js`, line: 12 }],
+    failedRequests: [],
+  })
+
+  assert.match(out, /TypeError: x is not a function \(https:\/\/tidy-pear\.trycloudflare\.com\/app\.js:12\)/)
+})
+
+test('formatCapture 仍然接受纯字符串的 console 错误（旧记录不该炸掉输出）', () => {
+  const out = formatCapture({
+    tunnelUrl: URL_, galleryToken: TOK, shots: [], video: null,
+    consoleErrors: ['plain string error'],
+    failedRequests: [],
+  })
+
+  assert.match(out, /plain string error/)
+})
+
 test('formatCapture states cleanliness explicitly when there is nothing wrong', () => {
   const out = formatCapture({
     tunnelUrl: URL_, galleryToken: TOK,
@@ -57,8 +109,15 @@ test('formatCapture states cleanliness explicitly when there is nothing wrong', 
 test('formatStart puts the token in the url and states the expiry', () => {
   const expiresAt = Date.now() + 30 * 60_000
   const out = formatStart({ tunnelUrl: URL_, sessionToken: TOK, expiresAt, dev: false })
-  assert.ok(out.includes(`${URL_}/?t=${TOK}`), out)
+  assert.ok(out.includes(`${URL_}/?__mp_token=${TOK}`), out)
   assert.match(out, /expires in 30 min/)
+})
+
+test('新链接一律用 __mp_token，绝不再发 ?t=——那正是和 Vite 撞车的那个名字', () => {
+  const out = formatStart({
+    tunnelUrl: URL_, sessionToken: TOK, expiresAt: Date.now() + 60_000, dev: true,
+  })
+  assert.doesNotMatch(out, /[?&]t=/, 'Vite 用 ?t=<timestamp> 做模块缓存击穿，预览链接不能占用这个名字')
 })
 
 test('formatStart flags dev mode and its hmr limitation', () => {
@@ -97,7 +156,7 @@ test('formatStatus 报告每条预览的端口、链接与剩余时间', () => {
     { targetPort: 4321, tunnelUrl: URL_, sessionToken: TOK, expiresAt: Date.now() + 30 * 60_000, artifacts: ['a.png'] },
   ])
   assert.match(out, /port 4321/)
-  assert.ok(out.includes(`${URL_}/?t=${TOK}`), out)
+  assert.ok(out.includes(`${URL_}/?__mp_token=${TOK}`), out)
   assert.match(out, /expires in 30 min/)
   assert.match(out, /artifacts: 1/)
 })
@@ -631,6 +690,84 @@ test('stop --all 报出清掉的损坏状态文件（Finding 2）', () => {
   assert.match(res.stdout, /4321/)
   assert.match(res.stdout, /may still be running/, 'pid 读不出来就杀不掉，必须说清楚')
   rmSync(dir, { recursive: true, force: true })
+})
+
+// mp() 用的是 spawnSync，会把测试进程的事件循环整个堵住——而下面的夹具服务器
+// 就跑在这个进程里，于是浏览器永远等不到响应。要驱动一个本进程内的服务器，
+// 只能异步地起 CLI。
+function mpAsync(dir, args) {
+  return new Promise((resolve) => {
+    const child = spawn(process.execPath, [BIN, ...args], {
+      env: { ...process.env, MP_STATE_DIR: dir },
+    })
+    let stdout = ''
+    let stderr = ''
+    child.stdout.on('data', (d) => { stdout += d })
+    child.stderr.on('data', (d) => { stderr += d })
+    child.on('close', (status) => resolve({ status, stdout, stderr }))
+  })
+}
+
+// --strict 的端到端：真的起一个浏览器去看一个真的缺资源的页面。
+// 判定「页面是好的」这件事若只有人眼能做，agent 就永远只能把 404 当背景噪音。
+async function withPage(html, fn) {
+  const srv = createHttpServer((req, res) => {
+    if (req.url === '/missing.js') {
+      res.writeHead(404, { 'Content-Type': 'text/plain' })
+      return res.end('nope')
+    }
+    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' })
+    res.end(html)
+  })
+  await new Promise((r) => srv.listen(0, '127.0.0.1', r))
+
+  const dir = mkdtempSync(join(tmpdir(), 'mp-strict-'))
+  const dummy = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' })
+  dummy.unref()
+  seedPreview(dir, 4321, {
+    tunnelPid: dummy.pid,
+    daemonPid: dummy.pid,
+    galleryDir: join(dir, 'gallery', '4321'),
+  })
+
+  try {
+    return await fn(dir, `http://127.0.0.1:${srv.address().port}/`)
+  } finally {
+    dummy.kill()
+    srv.close()
+    rmSync(dir, { recursive: true, force: true })
+  }
+}
+
+test('capture --strict 在页面有资源错误时以非零退出', async () => {
+  await withPage('<!doctype html><meta charset=utf-8><script src="/missing.js"></script><h1>hi</h1>',
+    async (dir, url) => {
+      const res = await mpAsync(dir, ['capture', url, '--strict', '--wait-ms', '0'])
+
+      assert.equal(res.status, 1, `实得 ${res.status}: ${res.stdout}${res.stderr}`)
+      assert.match(res.stdout, /FAILED REQUESTS/, '截图与诊断照常给出来，只是退出码变了')
+      assert.match(res.stdout, /missing\.js/)
+      assert.match(res.stderr, /--strict/)
+    })
+})
+
+test('capture --strict 在页面干净时照常成功', async () => {
+  await withPage('<!doctype html><meta charset=utf-8><h1>clean</h1>', async (dir, url) => {
+    const res = await mpAsync(dir, ['capture', url, '--strict', '--wait-ms', '0'])
+
+    assert.equal(res.status, 0, `实得 ${res.status}: ${res.stdout}${res.stderr}`)
+    assert.match(res.stdout, /loaded clean/)
+  })
+})
+
+test('capture 拒绝不认识的 --device，而不是悄悄给一台 iPhone', async () => {
+  await withPage('<!doctype html><h1>x</h1>', async (dir, url) => {
+    const res = await mpAsync(dir, ['capture', url, '--device', 'Nokia 3310'])
+
+    assert.equal(res.status, 1)
+    assert.match(res.stderr, /unknown --device "Nokia 3310"/)
+    assert.match(res.stderr, /Pixel 7/, '要给出正确写法的例子')
+  })
 })
 
 test('daemon 已死但隧道还活着时 stop 省略 --port 仍会收网（Finding 1）', () => {

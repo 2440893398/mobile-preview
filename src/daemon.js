@@ -86,7 +86,11 @@ export function cleanupAll() {
       if (!m) continue
 
       const port = Number(m[1])
-      if (state.read(port)) killed += cleanupStale(port).killed
+      const s = state.read(port)
+      if (s) {
+        killed += killRecorded(s)
+        state.clear(port)
+      }
     }
   }
 
@@ -172,6 +176,24 @@ export async function runDaemon({
   await new Promise((resolve) => proxy.listen(0, '127.0.0.1', resolve))
   const proxyPort = proxy.address().port
 
+  // Claim the slot before the tunnel exists, and deliberately without the
+  // tokens: previewHealth still reads this as `incomplete`, so nothing treats
+  // it as a usable preview and no link can be printed from it. What it buys is
+  // that a second `mp start --port N` can see there is already a daemon here
+  // and attach to it instead of spawning a rival into the same slot — the
+  // shape behind "the first start printed nothing, the second printed a link".
+  state.write(targetPort, {
+    daemonPid: process.pid,
+    targetPort,
+    proxyPort,
+    dev,
+    expiresAt,
+    graceMs,
+    galleryDir,
+    stage: 'starting',
+    stageAt: Date.now(),
+  })
+
   let tunnelPid = null
 
   // Pure cleanup, split from the process.exit below on purpose: a test can
@@ -210,8 +232,24 @@ export async function runDaemon({
     process.removeListener('SIGTERM', exitOnShutdown)
   }
 
+  const logPath = state.tunnelLogPath(targetPort)
+
   try {
-    const t = await startTunnelFn(proxyPort, { logPath: state.tunnelLogPath(targetPort) })
+    const t = await startTunnelFn(proxyPort, {
+      logPath,
+      // The CLI cannot see the daemon's stdio (it is spawned detached with
+      // stdio: 'ignore'), so the state file is the only channel through which
+      // "still working, here is where" can reach a waiting `mp start`.
+      onProgress: ({ stage, attempt, tries }) => {
+        try {
+          state.write(targetPort, {
+            stage, attempt, tries, stageAt: Date.now(),
+          })
+        } catch {
+          // Progress is a nicety; losing it must not fail the startup.
+        }
+      },
+    })
     tunnelPid = t.pid
     state.write(targetPort, {
       tunnelUrl: t.url,
@@ -225,6 +263,8 @@ export async function runDaemon({
       galleryDir,
       galleryToken,
       sessionToken,
+      stage: 'ready',
+      stageAt: Date.now(),
       artifacts: [],
     })
   } catch (err) {
@@ -232,7 +272,11 @@ export async function runDaemon({
     proxy.close()
     state.write(targetPort, {
       error: String(err?.message || err),
+      errorReason: err?.reason || 'unknown',
+      logPath,
       daemonPid: process.pid,
+      stage: 'failed',
+      stageAt: Date.now(),
     })
     process.exit(1)
   }

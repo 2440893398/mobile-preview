@@ -60,6 +60,46 @@ test('runDaemon 接好了代理的 onWindowOpen：真实请求命中兑换路径
   })
 })
 
+test('runDaemon 在隧道就绪前就占住槽位，但绝不提前落下令牌（附着的前提）', async () => {
+  const port = 6304
+  let duringEstablish = null
+
+  await withFakeDaemon(port, {
+    startTunnelFn: async () => {
+      duringEstablish = state.read(port)
+      return { url: `https://fake-${port}.trycloudflare.com`, pid: 999_000 }
+    },
+  }, async (handle) => {
+    assert.ok(duringEstablish, '隧道还没起来时就该有记录了——否则并发的 start 只能盲起第二个 daemon')
+    assert.equal(duringEstablish.daemonPid, process.pid)
+    assert.equal(duringEstablish.tunnelUrl, undefined)
+    assert.equal(duringEstablish.sessionToken, undefined,
+      '就绪前落下令牌，等于允许打印一条还没人能访问的链接')
+    assert.equal(previewHealth(duringEstablish).active, false,
+      '占位记录不能被任何人当成可用预览')
+    handle.shutdown()
+  })
+})
+
+test('runDaemon 把隧道阶段写进状态文件，等待中的 start 才有东西可看', async () => {
+  const port = 6305
+  let afterProgress = null
+
+  await withFakeDaemon(port, {
+    startTunnelFn: async (_proxyPort, { onProgress }) => {
+      onProgress({ stage: 'registering', attempt: 2, tries: 4 })
+      afterProgress = state.read(port)
+      return { url: `https://fake-${port}.trycloudflare.com`, pid: 999_000 }
+    },
+  }, async (handle) => {
+    assert.equal(afterProgress.stage, 'registering')
+    assert.equal(afterProgress.attempt, 2)
+    assert.equal(afterProgress.tries, 4)
+    assert.equal(state.read(port).stage, 'ready', '成功之后阶段要落到 ready')
+    handle.shutdown()
+  })
+})
+
 test('runDaemon 返回的 shutdown 只清理仍属于自己的槽位（Gap 2）', async () => {
   const port = 6302
   await withFakeDaemon(port, {}, async (handle) => {

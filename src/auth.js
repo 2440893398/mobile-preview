@@ -17,12 +17,13 @@ const DEV_ONLY = [
 ]
 
 function pathVariants(pathname) {
-  const variants = []
   let current = String(pathname).replaceAll('\\', '/')
+  const variants = [current]
 
+  // Push *after* each decode, so the deepest form always makes the list.
+  // Pushing before decoding used to drop the final layer: a triple-encoded
+  // /@fs/ decoded clean on the last iteration but was never checked.
   for (let i = 0; i < 3; i += 1) {
-    variants.push(current)
-
     let decoded
     try {
       decoded = decodeURIComponent(current).replaceAll('\\', '/')
@@ -32,6 +33,7 @@ function pathVariants(pathname) {
 
     if (decoded === current) break
     current = decoded
+    variants.push(current)
   }
 
   return variants

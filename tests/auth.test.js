@@ -60,6 +60,10 @@ test('encoded sensitive paths are blocked in both modes', () => {
     '/%2egit/config',
     '/%252eenv',
     '/%2540fs/C:/Users/me/.ssh/id_rsa',
+    // Triple-encoded: the decode loop used to push variants before decoding,
+    // so the final fully-decoded form never made the list and slipped past.
+    '/%25252eenv',
+    '/%252540fs/C:/Users/me/.ssh/id_rsa',
   ]
 
   for (const dev of [false, true]) {

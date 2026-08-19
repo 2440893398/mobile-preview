@@ -1,0 +1,30 @@
+{
+  "name": "mobile-preview",
+  "version": "0.2.0",
+  "description": "Expose a local web app through a temporary authenticated phone preview.",
+  "author": {
+    "name": "mobile-preview contributors"
+  },
+  "license": "MIT",
+  "keywords": [
+    "mobile",
+    "preview",
+    "cloudflare",
+    "tunnel",
+    "screenshots"
+  ],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Mobile Preview",
+    "shortDescription": "Preview local apps on a phone.",
+    "longDescription": "Helps Codex expose a local web app through the authenticated mp CLI, capture mobile screenshots, and clean up temporary tunnels.",
+    "developerName": "mobile-preview contributors",
+    "category": "Productivity",
+    "capabilities": [],
+    "defaultPrompt": [
+      "Show my local app on my phone.",
+      "Capture the current mobile preview.",
+      "Stop the temporary phone preview."
+    ]
+  }
+}

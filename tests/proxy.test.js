@@ -73,6 +73,14 @@ test('correct token sets an HttpOnly cookie and redirects to the clean path', as
   assert.match(cookie, /Secure/)
 })
 
+test('namespaced token parameter exchanges and redirects cleanly', async (t) => {
+  const { token, base: b } = await proxyWith(t, {})
+  const res = await fetch(`${b}/?__mp_token=${token}`, { redirect: 'manual' })
+  assert.equal(res.status, 302)
+  assert.equal(res.headers.get('location'), '/')
+  assert.match(res.headers.get('set-cookie'), /^mp_session=/)
+})
+
 async function proxyWith(t, overrides) {
   const token = mintToken()
   const server = createProxy({

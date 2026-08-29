@@ -231,3 +231,37 @@ test('文档一律使用 __mp_token，不再把 ?t= 当作默认形式', () => {
     assert.match(text, /__mp_token/, `${parts.join('/')} 必须写明新的参数名`)
   }
 })
+
+// description 是 skill 唯一的入口：两个宿主都只把 name + description 放进技能
+// 列表，模型据此决定要不要加载。里面没有用户真会说的那几个词，就只剩「点名插件」
+// 这一条路——而这正是当初的问题。Claude Code 按 1536 字符截断这段文本，超出的
+// 部分会被砍掉，所以关键用途必须写在最前面。
+const SKILL_FILES = [
+  ['skill', 'SKILL.md'],
+  ['plugins', 'mobile-preview', 'skills', 'mobile-preview', 'SKILL.md'],
+]
+
+function skillDescription(text) {
+  const front = /^---\r?\n([\s\S]*?)\r?\n---/.exec(text)
+  assert.ok(front, 'SKILL.md 必须有 frontmatter')
+  const line = /^description:\s*(.+)$/m.exec(front[1])
+  assert.ok(line, 'SKILL.md 必须有 description')
+  return line[1].trim()
+}
+
+test('两份 skill 的 description 都带着用户真会说的触发词', () => {
+  // 中英各留一组：这台机器上的人用中文提要求，插件本身是英文的。
+  const triggers = [/localhost/i, /phone/i, /手机/, /screenshot/i, /截图/, /preview/i, /预览/]
+
+  for (const parts of SKILL_FILES) {
+    const description = skillDescription(readRoot(...parts))
+    const where = parts.join('/')
+
+    assert.match(description, /^Use /, `${where} 的 description 要把用途写在最前面`)
+    assert.ok(description.length <= 1536,
+      `${where} 的 description 有 ${description.length} 字符，会被技能列表截断`)
+    for (const trigger of triggers) {
+      assert.match(description, trigger, `${where} 的 description 少了触发词 ${trigger}`)
+    }
+  }
+})

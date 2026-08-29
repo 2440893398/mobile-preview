@@ -33,4 +33,22 @@ source maps are listed as ignorable rather than mixed in. `--wait-for`,
 `--network-idle` and `--full-page` cover SPAs that are not finished rendering
 half a second after load.
 
+## Remote sessions
+
+The plugin also installs a `SessionStart` hook (`hooks/hooks.json` →
+`hooks/session-start.mjs`), which Claude Code and Codex both pick up. In a
+session started through Happy — where the user is on a phone and `localhost`
+resolves to the phone itself — it states up front that a local address cannot be
+handed over and that the app has to be exposed through `mp` first. Local
+sessions get nothing.
+
+Under Claude Code the check is a few environment variables. Under Codex nothing
+in the environment says "happy", so the hook reads the process tree, where the
+happy CLI is an ancestor of the session; that path costs about 0.8s and is only
+taken when the environment could not answer.
+
+**Codex will not run the hook until you trust it.** New and modified hooks are
+reviewed at startup in the Codex TUI; until then they are skipped silently.
+Trust it once locally and Happy-driven Codex sessions inherit that trust.
+
 The repository-local marketplace entry is in `.agents/plugins/marketplace.json`.

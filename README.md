@@ -123,6 +123,59 @@ The proxy does not forward WebSocket upgrades at all, so anything built on
 them — Vite HMR first of all — does not work through the preview. A `--dev`
 preview still serves the app; reload the page on the phone to pick up changes.
 
+## Remote sessions trigger the skill on their own
+
+A skill only fires when the model thinks of it, and it thinks of it from the
+words the user typed. Someone holding a phone types "show me how it looks now",
+not "use the mobile-preview plugin" — and gets back a `http://localhost:5173`
+that on their device points at the phone itself.
+
+Two things answer that, and the cheaper one is the skill's own `description`.
+Both hosts put only a skill's name and description into the listing the model
+picks from, so that text is where triggering is won or lost: it names the
+concrete words a user says — "on my phone", "看看效果", "screenshot", "预览",
+"localhost 打不开" — instead of describing the tool. That works in every session,
+local or remote, with nothing installed.
+
+The second is a `SessionStart` hook (`plugins/mobile-preview/hooks/`), for the
+case where the user does not ask at all and a local URL is about to be handed
+over anyway. When the session was started through Happy it tells the model,
+once, at the top of the conversation: this person is not at this machine, a
+local address is not a deliverable, expose it with `mp start` and return the
+preview link instead. In a local session the hook prints nothing. One file
+serves both hosts — Claude
+Code and Codex each discover `<plugin>/hooks/hooks.json`, substitute
+`${CLAUDE_PLUGIN_ROOT}`, and read back the same
+`hookSpecificOutput.additionalContext`.
+
+Detection reads the environment rather than the phrasing: `CLAUDE_CODE_EXECPATH`
+pointing inside Happy's npm package, any `HAPPY_*` variable, or
+`CLAUDE_CODE_ENTRYPOINT=remote_mobile`. It deliberately does not search the
+environment for the string "happy" — a machine with Happy installed has it in
+`NO_PROXY` and `PATH`, which would report every local terminal session as remote.
+
+A Codex session leaves none of those traces: Happy drives it as
+`codex app-server` with a plain inherited environment, and the one place the
+name lands — `originator: happy-codex` in the rollout file — is written 8–25
+seconds in, against 0.2s for a local session, far too late for a hook. So when
+the environment cannot answer and the host is not Claude Code, the hook reads
+the process tree instead, where the happy CLI is always an ancestor. That costs
+about 0.8s on Windows and runs only on that path.
+
+Two things to know about Codex specifically:
+
+- **Hooks do not run until they are trusted.** Codex reviews new and modified
+  hooks at startup in the TUI ("Hooks need review… Trust all and continue"), and
+  silently skips them otherwise — which looks exactly like a broken hook. Trust
+  it once in a local `codex` session and Happy-driven sessions inherit it.
+  `codex exec --dangerously-bypass-hook-trust` skips the gate for automation.
+- The process-tree walk stops at the first ancestor that has already exited.
+  Normal spawn chains stay intact; a shell that emulates `exec` by respawning
+  itself can sever it, and the session is then read as local.
+
+Plugin caches key on the version, so a `hooks/` or skill change only reaches the
+host after the version in the four manifests is bumped.
+
 ## Design
 
 See `docs/superpowers/specs/2026-08-05-mobile-preview-design.md`.

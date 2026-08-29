@@ -1,6 +1,6 @@
 ---
 name: mobile-preview
-description: Use when a user needs a temporary authenticated tunnel to view a locally running app on a phone and capture screenshots inline.
+description: Use whenever a locally running app has to be opened, shown, verified or screenshotted by someone who is not at this machine — every time a localhost or 127.0.0.1 URL would otherwise be handed to the user, and in any remote session (Happy, phone) where such an address cannot be opened at all. Triggers on "on my phone", "手机上看看", "看看效果", "preview", "预览一下", "send me the link", "把链接发我", "screenshot", "截图", "mobile UI", "localhost 打不开", "这个地址打不开", "stop the preview", "关掉预览", and on mp start / mp capture / mp stop.
 ---
 
 # mobile-preview
@@ -12,6 +12,12 @@ Use `mp start` to expose the local app, `mp capture` to collect screenshots and 
 - The user just changed frontend code and wants to verify it on a phone.
 - The user asks what the app looks like now.
 - You need to check a page yourself before handing results back.
+- The session is remote — started through Happy — and a local address would
+  otherwise be the answer. There the user is on a phone, `localhost` points at
+  the phone itself, and this is the only way to hand the app over. It applies
+  whether or not the user names the plugin; the plugin's SessionStart hook
+  detects the session from `CLAUDE_CODE_EXECPATH` / `HAPPY_*`, or from the
+  process tree under Codex, and says so.
 
 ## Workflow
 

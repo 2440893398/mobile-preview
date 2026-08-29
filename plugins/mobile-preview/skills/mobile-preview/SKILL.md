@@ -1,6 +1,6 @@
 ---
 name: mobile-preview
-description: Use when a user wants Codex to expose a locally running web app on a phone, inspect the current mobile UI, capture screenshots, or stop a temporary preview.
+description: Use whenever a locally running app has to be opened, shown, verified or screenshotted by someone who is not at this machine — every time a localhost or 127.0.0.1 URL would otherwise be handed to the user, and in any remote session (Happy, phone) where such an address cannot be opened at all. Triggers on "on my phone", "手机上看看", "看看效果", "preview", "预览一下", "send me the link", "把链接发我", "screenshot", "截图", "mobile UI", "localhost 打不开", "这个地址打不开", "stop the preview", "关掉预览", and on mp start / mp capture / mp stop.
 ---
 
 # Mobile Preview
@@ -8,6 +8,28 @@ description: Use when a user wants Codex to expose a locally running web app on 
 Use the installed `mp` CLI to give the user a temporary, token-gated URL for a
 local web app. The plugin is project-agnostic: first identify the app's local
 HTTP port, then use that port with `mp`.
+
+## Remote sessions
+
+A session started through Happy is a phone session: the person asking is not at
+this machine, so `http://localhost:<port>` is not an answer they can act on — on
+their device that address is the phone. In such a session this workflow is not
+one option among several; it is the only way a local app can be handed over, and
+it applies even when the user never names the plugin. The plugin's SessionStart
+hook detects such a session and says so at the top of the conversation, on
+Claude Code and Codex alike; under any other host, notice it yourself.
+
+The signal is the environment, not the phrasing: `CLAUDE_CODE_EXECPATH` pointing
+inside Happy's npm package, or a `HAPPY_*` variable, or
+`CLAUDE_CODE_ENTRYPOINT=remote_mobile`. Do not test for the string "happy"
+anywhere in the environment — a machine that has Happy installed carries it in
+`NO_PROXY` and `PATH`, which makes every local session look remote. A Codex
+session carries none of those, so there the hook reads the process tree, in
+which the happy CLI is an ancestor.
+
+If the notice never appears in a Codex session that clearly is remote, the
+likely cause is hook trust: Codex reviews new and modified hooks at startup and
+skips them until they are trusted, without saying so during the session.
 
 ## Prerequisites
 

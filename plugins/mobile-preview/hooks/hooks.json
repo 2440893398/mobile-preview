@@ -1,0 +1,16 @@
+{
+  "description": "Tells a Happy (phone) session, once at the top, that a localhost address is not something its user can open, and that the app has to go through `mp` first. No matcher: every way a session can start — startup, resume, clear, compact — needs the same warning, and a new source should not silently lose it. Prints nothing in a local session.",
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/session-start.mjs\"",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}

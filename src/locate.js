@@ -17,6 +17,7 @@ export function resolveCommand(name) {
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'ignore'],
       timeout: 10_000,
+      windowsHide: true,
     })
     return out.split(/\r?\n/).find(Boolean)?.trim() || null
   } catch {

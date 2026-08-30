@@ -19,7 +19,10 @@ function convertVideoToMp4(input, output) {
     '-pix_fmt', 'yuv420p',
     '-movflags', '+faststart',
     output,
-  ], { encoding: 'utf8' })
+    // Same reason as the cloudflared spawn in tunnel.js: capture runs from the
+    // CLI (where this flashes a console window open and shut) and could run
+    // from the console-less daemon (where it would open one and keep it).
+  ], { encoding: 'utf8', windowsHide: true })
 
   if (result.status !== 0) {
     const detail = result.stderr?.trim() || result.stdout?.trim() || `exit code ${result.status}`

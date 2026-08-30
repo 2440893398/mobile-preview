@@ -19,6 +19,9 @@ export function globalNpmRoot() {
       stdio: ['ignore', 'pipe', 'ignore'],
       timeout: 20_000,
       shell: WIN,
+      // shell: WIN routes this through cmd.exe, which is a console program of
+      // its own — without this it flashes a window on every `mp doctor`.
+      windowsHide: true,
     })
     return out.trim() || null
   } catch {

@@ -795,3 +795,46 @@ test('daemon 已死但隧道还活着时 stop 省略 --port 仍会收网（Findi
     rmSync(dir, { recursive: true, force: true })
   }
 })
+
+// --- 窗口没了之后，可见性得从别处补回来 ---
+
+test('formatStart 说清楚它在后台、没有窗口、怎么管', () => {
+  const out = formatStart({
+    tunnelUrl: URL_, sessionToken: TOK, expiresAt: Date.now() + 60_000, dev: false,
+  })
+  // 桌面上不再有任何东西表示"预览在跑"，也没有窗口可关。这两件事只能在这里说。
+  assert.match(out, /background/i)
+  assert.match(out, /no window/i)
+  assert.match(out, /mp status/)
+  assert.match(out, /mp stop/)
+})
+
+test('formatStatus 列出 pid 和日志路径——这是那个黑窗口原本唯一的用处', () => {
+  const out = formatStatus([{
+    targetPort: 4321,
+    tunnelUrl: URL_,
+    sessionToken: TOK,
+    expiresAt: Date.now() + 30 * 60_000,
+    artifacts: [],
+    daemonPid: 111,
+    tunnelPid: 222,
+  }])
+  assert.match(out, /daemon pid 111/)
+  assert.match(out, /cloudflared pid 222/)
+  assert.match(out, /4321\.cloudflared\.log/)
+  assert.match(out, /mp stop --all/)
+})
+
+test('URL 仍然独占一行，pid 那些不能挤上去', () => {
+  const out = formatStatus([{
+    targetPort: 4321,
+    tunnelUrl: URL_,
+    sessionToken: TOK,
+    expiresAt: Date.now() + 60_000,
+    artifacts: [],
+    daemonPid: 111,
+    tunnelPid: 222,
+  }])
+  // 手机端的聊天客户端里，代码块不可选中；链接必须单独成行才能被复制走。
+  assert.ok(out.split('\n').includes(`${URL_}/?__mp_token=${TOK}`), out)
+})

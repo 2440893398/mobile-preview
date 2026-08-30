@@ -8,7 +8,7 @@
     {
       "name": "mobile-preview",
       "description": "Expose a local web app through a temporary authenticated phone preview, capture mobile screenshots, and clean up the tunnel afterwards.",
-      "version": "0.3.3",
+      "version": "0.3.4",
       "source": "./plugins/mobile-preview",
       "author": {
         "name": "mobile-preview contributors"

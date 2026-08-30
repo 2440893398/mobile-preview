@@ -40,6 +40,14 @@ Several previews can run at once, one per target port. `capture` and `stop`
 default to the only active preview and refuse to guess when more than one is
 running — pass `--port` then. `mp status` lists every slot.
 
+A preview runs in the background with no window of its own: nothing appears on
+the desktop, and there is nothing to close by hand. `mp status` is where it is
+visible instead — link, remaining TTL, both pids, and the cloudflared log for
+that port. Three things bound a preview's life: its `--ttl`, `mp stop`, and the
+orphan sweep `mp status` and `mp stop` run before they report, which reclaims
+any cloudflared whose daemon was killed outright and left it with nothing to
+expire it.
+
 ### `mp start`
 
 | Flag | Default | Meaning |
@@ -186,4 +194,5 @@ See `docs/superpowers/specs/2026-08-05-mobile-preview-design.md`.
 - All auth failures return 404, never 403
 - `/@fs/`, `.env`, `.git/` are blocked in every mode
 - The session cookie is stripped before requests reach your app
-- The daemon self-terminates at TTL, so an orphaned tunnel still dies
+- The daemon self-terminates at TTL, and `mp status`/`mp stop` reap any tunnel
+  whose daemon died before it could, so no tunnel outlives what tracks it

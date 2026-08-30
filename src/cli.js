@@ -6,7 +6,9 @@ import * as state from './state.js'
 import {
   cleanupAll, cleanupLegacy, cleanupStale, previewHealth, sweepCorruptSlots,
 } from './daemon.js'
-import { establishBudgetMs, isAlive, stageText } from './tunnel.js'
+import {
+  establishBudgetMs, isAlive, reapOrphanTunnels, stageText,
+} from './tunnel.js'
 import { SESSION_TOKEN_QUERY_PARAM } from './proxy.js'
 import { COMMANDS, VERSION, renderCommandHelp, renderHelp } from './usage.js'
 import { LOCALHOST_HARDCODE_HINT, formatDoctor, runChecks } from './doctor.js'
@@ -214,6 +216,12 @@ export function formatStart({ tunnelUrl, sessionToken, expiresAt, dev }) {
   const lines = [
     `preview: ${previewUrl({ tunnelUrl, sessionToken })}`,
     `expires in ${mins} min`,
+    // The daemon and its tunnel are windowless (see tunnel.js), so nothing on
+    // the desktop says a preview is running and nothing can be closed to end
+    // one. Say both here, once, rather than leave the user hunting in Task
+    // Manager for something they can no longer see.
+    'running in the background, no window — `mp status` to check on it,'
+    + ' `mp stop` to end it early',
   ]
   if (dev) {
     lines.push('dev mode: dev server exposed. WebSockets are not proxied, so Vite HMR '
@@ -235,7 +243,7 @@ function windowClosed(s, now) {
 export function formatStatus(previews, now = Date.now()) {
   if (previews.length === 0) return 'no active preview'
 
-  return previews.map((s) => {
+  const blocks = previews.map((s) => {
     const mins = Math.round((s.expiresAt - now) / 60_000)
     // The url goes on its own bare line: mobile chat clients render code
     // blocks unselectable, and a link the user cannot copy is a link that
@@ -245,6 +253,14 @@ export function formatStatus(previews, now = Date.now()) {
       previewUrl(s),
       `  expires in ${mins} min, artifacts: ${(s.artifacts || []).length}`,
     ]
+    // A preview owns no window of its own (see the windowsHide comment in
+    // tunnel.js), so this listing is the only place it is visible at all.
+    // Naming the pids and the log is what makes that a fair trade: it is what
+    // the window used to be good for.
+    if (s.daemonPid && s.tunnelPid) {
+      lines.push(`  daemon pid ${s.daemonPid}, cloudflared pid ${s.tunnelPid}`)
+      lines.push(`  log: ${state.tunnelLogPath(s.targetPort)}`)
+    }
     if (windowClosed(s, now)) {
       lines.push(
         '  link no longer exchangeable — the phone\'s existing session still'
@@ -252,7 +268,11 @@ export function formatStatus(previews, now = Date.now()) {
       )
     }
     return lines.join('\n')
-  }).join('\n\n')
+  })
+
+  blocks.push('previews run in the background with no window: `mp stop [--port N]`'
+    + ' ends one, `mp stop --all` ends every one.')
+  return blocks.join('\n\n')
 }
 
 function startPayload(s, port) {
@@ -415,6 +435,21 @@ function sweepCorrupt() {
     note(
       `warning: removed ${unreadable.length} unreadable state file(s) `
       + `(port(s) ${unreadable.join(', ')}); any cloudflared they owned may still be running`,
+    )
+  }
+}
+
+// Runs after the state-file sweeps, never before: those kill and clear the
+// slots they can account for, so whatever cloudflared is still standing here
+// genuinely has no record left. Recorded tunnels are passed in as `known` so
+// the fast path can stop at a single tasklist.
+function reapOrphans() {
+  const known = new Set(state.list().map((s) => s.tunnelPid).filter(Boolean))
+  const pids = reapOrphanTunnels({ known })
+  if (pids.length) {
+    note(
+      `reaped ${pids.length} orphaned cloudflared tunnel(s) (pid ${pids.join(', ')}) — `
+      + 'their daemon was gone, so nothing was left to expire them',
     )
   }
 }
@@ -638,6 +673,12 @@ function statusView(s) {
     dev: Boolean(s.dev),
     artifacts: s.artifacts || [],
     exchangeable: !windowClosed(s, Date.now()),
+    // Same reason as the pid line in formatStatus: with no window to point at,
+    // a caller driving this over --json needs the pids and the log from here
+    // or from nowhere.
+    daemonPid: s.daemonPid ?? null,
+    tunnelPid: s.tunnelPid ?? null,
+    logPath: state.tunnelLogPath(s.targetPort),
   }
 }
 
@@ -677,6 +718,8 @@ function cmdStatus(args) {
     cleanupStale(s.targetPort)
   }
 
+  reapOrphans()
+
   if (parsed.json) {
     emitJson(live.map(statusView))
     return
@@ -704,6 +747,7 @@ function cmdStop(args) {
 
   if (parsed.all) {
     reportSweep(cleanupAll())
+    reapOrphans()
     return
   }
 
@@ -717,11 +761,16 @@ function cmdStop(args) {
     // legacy file, not just the legacy file. On an empty state dir this is
     // still {killed: 0}, so the exit-0-on-empty contract is unchanged.
     reportSweep(cleanupAll())
+    reapOrphans()
     return
   }
 
   const r = cleanupStale(port)
   note(`stopped port ${port} (${r.killed} process tree(s) terminated)`)
+  // Also here, not just in the two sweep-everything branches: with exactly one
+  // active preview `mp stop` resolves a port and lands in this one, which is
+  // the shape of the command most people actually type.
+  reapOrphans()
 }
 
 function cmdDoctor(args) {

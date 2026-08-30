@@ -8,9 +8,15 @@ import {
   classifyTunnelFailure,
   createLogSink,
   establishBudgetMs,
+  findOrphanTunnels,
   isAlive,
+  isOrphanedTunnel,
+  isOurTunnelCommand,
+  parseCimProcesses,
+  parsePsProcesses,
   parseTunnelReady,
   parseTunnelUrl,
+  reapOrphanTunnels,
   stageText,
   startTunnel,
   TUNNEL_DEFAULTS,
@@ -484,4 +490,161 @@ test('超时触发的重试会回收上一次尝试的子进程，不留活体 (
     delete process.env.MP_TEST_COUNTER
     rmSync(dir, { recursive: true, force: true })
   }
+})
+
+// --- windowless background processes, and reclaiming what they leave behind ---
+
+test('cloudflared 以 windowsHide 启动——否则会在桌面上开出一个黑窗口', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'mp-tunnel-'))
+  let seen = null
+
+  const t = await startTunnel(1234, {
+    bin: 'fake-cloudflared',
+    logPath: join(dir, 'cloudflared.log'),
+    spawnFn: (bin, args, opts) => {
+      seen = opts
+      return fakeSpawn(dir, FAKE_CLOUDFLARED)(bin, args, opts)
+    },
+  })
+
+  try {
+    // 守护进程自己是 detached 起的（Windows 上即 DETACHED_PROCESS，没有控制台
+    // 可继承），所以少了这一项，Windows 会给 cloudflared 新分配一个控制台窗口。
+    assert.equal(seen.windowsHide, true)
+  } finally {
+    process.kill(t.pid)
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('只认本项目 spawn 出来的那条 cloudflared 命令行', () => {
+  const ours = '"C:\Program Files (x86)\cloudflared\cloudflared.exe" tunnel'
+    + ' --no-autoupdate --protocol http2 --url http://127.0.0.1:53806'
+  assert.equal(isOurTunnelCommand(ours), true)
+  assert.equal(isOurTunnelCommand('/usr/bin/cloudflared tunnel --no-autoupdate --url http://127.0.0.1:9'), true)
+
+  // 用户自己跑的具名隧道 / 服务：回收器绝不能碰。
+  assert.equal(isOurTunnelCommand('cloudflared tunnel run my-prod-tunnel'), false)
+  assert.equal(isOurTunnelCommand('cloudflared service install'), false)
+  // --url 指向别处的，也不是我们的。
+  assert.equal(isOurTunnelCommand('cloudflared tunnel --no-autoupdate --url http://10.0.0.5:80'), false)
+  assert.equal(isOurTunnelCommand(''), false)
+  assert.equal(isOurTunnelCommand(null), false)
+})
+
+test('孤儿的判据是父进程，不是状态文件', () => {
+  const dead = () => false
+  const alive = () => true
+
+  // 守护进程已死：没有任何东西还会执行它的 TTL，这才是孤儿。
+  assert.equal(isOrphanedTunnel({ ppid: 4242 }, { isAliveFn: dead, win: true }), true)
+  // 守护进程还活着：既可能是健康的预览，也可能是 spawn 完还没写状态文件的那
+  // 一瞬间。两种都不能杀。
+  assert.equal(isOrphanedTunnel({ ppid: 4242 }, { isAliveFn: alive, win: true }), false)
+  // POSIX 上孤儿会被 init 收养，父进程永远"活着"，所以判据换成 ppid 1。
+  assert.equal(isOrphanedTunnel({ ppid: 1 }, { isAliveFn: alive, win: false }), true)
+  assert.equal(isOrphanedTunnel({ ppid: 4242 }, { isAliveFn: alive, win: false }), false)
+})
+
+test('解析 CIM 输出：单个进程时 ConvertTo-Json 给的是对象而不是数组', () => {
+  const one = JSON.stringify({
+    ProcessId: 17284, ParentProcessId: 26588, CommandLine: 'cloudflared.exe tunnel --url x',
+  })
+  assert.deepEqual(parseCimProcesses(one), [
+    { pid: 17284, ppid: 26588, cmd: 'cloudflared.exe tunnel --url x' },
+  ])
+
+  const two = JSON.stringify([
+    { ProcessId: 1, ParentProcessId: 2, CommandLine: 'a' },
+    { ProcessId: 3, ParentProcessId: 4, CommandLine: null },
+  ])
+  assert.deepEqual(parseCimProcesses(two), [
+    { pid: 1, ppid: 2, cmd: 'a' },
+    { pid: 3, ppid: 4, cmd: '' },
+  ])
+
+  // PowerShell 起不来、被策略拦掉、输出被 AV 吃掉——一律当作"没什么可回收"。
+  assert.deepEqual(parseCimProcesses(''), [])
+  assert.deepEqual(parseCimProcesses('not json'), [])
+})
+
+test('解析 ps 输出：pid、ppid、以及带空格的完整命令行', () => {
+  const out = [
+    '  501     1 /usr/local/bin/cloudflared tunnel --no-autoupdate --url http://127.0.0.1:5173',
+    '  502   501 /bin/sh -c something else',
+    'garbage line',
+    '',
+  ].join('\n')
+
+  assert.deepEqual(parsePsProcesses(out), [
+    { pid: 501, ppid: 1, cmd: '/usr/local/bin/cloudflared tunnel --no-autoupdate --url http://127.0.0.1:5173' },
+    { pid: 502, ppid: 501, cmd: '/bin/sh -c something else' },
+  ])
+})
+
+function fakeWindowsProcessTable(rows) {
+  return (file, _args) => {
+    if (file === 'tasklist') {
+      return rows.map((r) => `"cloudflared.exe","${r.pid}","Console","1","30,000 K"`).join('\r\n')
+    }
+    return JSON.stringify(rows.map((r) => ({
+      ProcessId: r.pid, ParentProcessId: r.ppid, CommandLine: r.cmd,
+    })))
+  }
+}
+
+const OURS = 'cloudflared.exe tunnel --no-autoupdate --protocol http2 --url http://127.0.0.1:53806'
+
+test('findOrphanTunnels 只挑出父进程已死、且是我们起的那些', () => {
+  const execFn = fakeWindowsProcessTable([
+    { pid: 100, ppid: 900, cmd: OURS }, // 守护进程已死 → 孤儿
+    { pid: 200, ppid: 901, cmd: OURS }, // 守护进程还在 → 放过
+    { pid: 300, ppid: 900, cmd: 'cloudflared.exe tunnel run my-prod-tunnel' }, // 不是我们的
+  ])
+
+  const found = findOrphanTunnels({
+    execFn, win: true, isAliveFn: (pid) => pid === 901,
+  })
+  assert.deepEqual(found.map((p) => p.pid), [100])
+})
+
+test('状态文件里记着的隧道，连命令行都不用去查', () => {
+  const calls = []
+  const table = fakeWindowsProcessTable([{ pid: 100, ppid: 900, cmd: OURS }])
+  const execFn = (file, args) => {
+    calls.push(file)
+    return table(file, args)
+  }
+
+  const found = findOrphanTunnels({
+    execFn, win: true, known: new Set([100]), isAliveFn: () => false,
+  })
+
+  assert.deepEqual(found, [])
+  // 常见情况是每条 cloudflared 都有主：到 tasklist 为止就该收工，不该再去
+  // 起一个 PowerShell 查 CIM。
+  assert.deepEqual(calls, ['tasklist'])
+})
+
+test('reapOrphanTunnels 杀掉孤儿并把 pid 报出来', () => {
+  const killed = []
+  const pids = reapOrphanTunnels({
+    execFn: fakeWindowsProcessTable([{ pid: 100, ppid: 900, cmd: OURS }]),
+    win: true,
+    isAliveFn: () => false,
+    killFn: (pid) => killed.push(pid),
+  })
+
+  assert.deepEqual(pids, [100])
+  assert.deepEqual(killed, [100])
+})
+
+test('进程表读不出来时，回收器什么都不做', () => {
+  const pids = reapOrphanTunnels({
+    execFn: () => { throw new Error('tasklist: access is denied') },
+    win: true,
+    isAliveFn: () => false,
+    killFn: () => assert.fail('不该杀任何东西'),
+  })
+  assert.deepEqual(pids, [])
 })

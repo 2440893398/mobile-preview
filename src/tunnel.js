@@ -100,8 +100,14 @@ export function installHint() {
 export function killTree(pid) {
   if (!pid) return
   try {
-    if (WIN) execFileSync('taskkill', ['/PID', String(pid), '/T', '/F'], { stdio: 'ignore' })
-    else process.kill(pid, 'SIGKILL')
+    // windowsHide because the daemon calls this on its way out and has no
+    // console of its own — taskkill would otherwise flash one up as the last
+    // thing the user sees of a preview they just stopped.
+    if (WIN) {
+      execFileSync('taskkill', ['/PID', String(pid), '/T', '/F'], { stdio: 'ignore', windowsHide: true })
+    } else {
+      process.kill(pid, 'SIGKILL')
+    }
   } catch {
     // already dead — treat as success
   }
@@ -115,6 +121,129 @@ export function isAlive(pid) {
   } catch {
     return false
   }
+}
+
+// Every recorded process is reclaimed through its state file, so the one way
+// a cloudflared can outlive everything that knows about it is for its record
+// to disappear while it runs: a hard-killed daemon, a state file deleted by
+// hand, a slot sweepCorruptSlots removed because it would not parse. Before
+// windowsHide such a process at least sat there as a black window somebody
+// would eventually close. Now it is invisible, and nothing bounds its life —
+// the TTL that would have ended it belonged to the daemon that is gone. This
+// is the sweep that ends it instead.
+
+// Matching on the binary name alone would put a user's own
+// `cloudflared tunnel run <name>` service — or a Cloudflare-installed Windows
+// service — in the reaper's sights. Requiring the exact quick-tunnel argv
+// attemptTunnel spawns, down to the loopback --url, keeps it to ours.
+export function isOurTunnelCommand(cmd) {
+  const s = String(cmd || '')
+  return /cloudflared/i.test(s)
+    && /--no-autoupdate\b/.test(s)
+    && /--url\s+http:\/\/127\.0\.0\.1:\d+/.test(s)
+}
+
+// Orphanhood is judged by the parent, not by the state file: during the window
+// between the spawn and the state write, a healthy tunnel is running and not
+// yet recorded anywhere, and a reaper that went by the records alone would
+// kill the startup a concurrent `mp status` happened to catch mid-flight. A
+// live parent also means a live daemon, which means a TTL still due to fire —
+// nothing for this to do. Pid reuse can only make a dead parent look alive,
+// which fails toward leaving a process running rather than killing a stranger.
+export function isOrphanedTunnel({ ppid }, { isAliveFn = isAlive, win = WIN } = {}) {
+  // POSIX reparents orphans onto init rather than leaving the pid dangling, so
+  // there the tell is ppid 1, not a dead ppid. (A subreaper adopting it
+  // instead is the one case this misses; it fails toward leaving it running.)
+  if (!win && ppid <= 1) return true
+  return !isAliveFn(ppid)
+}
+
+function probe(file, args, execFn) {
+  try {
+    return execFn(file, args, {
+      encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 15_000, windowsHide: true,
+    }) || ''
+  } catch {
+    // Every caller treats "could not enumerate" as "nothing to reap". A
+    // missing ps, a locked-down PowerShell, an AV hook — none of them are
+    // worth failing the `mp status` the user actually asked for.
+    return ''
+  }
+}
+
+// tasklist is the cheap half: it yields pids and nothing else, but that is
+// enough to answer "is anything running that no preview accounts for", which
+// is `no` almost every time. Only when the answer is `yes` does this pay for
+// the CIM query, which is the only way on Windows to get a parent pid and a
+// command line in one call.
+function listWindowsTunnels(known, execFn) {
+  const listed = probe('tasklist', ['/FI', 'IMAGENAME eq cloudflared.exe', '/NH', '/FO', 'CSV'], execFn)
+  const unaccounted = [...listed.matchAll(/^"[^"]*","(\d+)"/gm)]
+    .map((m) => Number(m[1]))
+    .filter((pid) => !known.has(pid))
+  if (!unaccounted.length) return []
+
+  const out = probe('powershell.exe', [
+    '-NoProfile', '-NonInteractive', '-Command',
+    "Get-CimInstance Win32_Process -Filter \"Name='cloudflared.exe'\""
+    + ' | Select-Object ProcessId,ParentProcessId,CommandLine | ConvertTo-Json -Compress',
+  ], execFn)
+
+  return parseCimProcesses(out).filter((p) => unaccounted.includes(p.pid))
+}
+
+// Split out from listWindowsTunnels, and its ps counterpart from
+// listPosixTunnels, so both are testable from either platform: the parser that
+// never runs on the machine running the tests is exactly the one that rots.
+export function parseCimProcesses(text) {
+  let rows = []
+  try {
+    const parsed = JSON.parse(text)
+    // ConvertTo-Json emits a bare object, not a one-element array, when the
+    // query matches exactly one process.
+    rows = Array.isArray(parsed) ? parsed : [parsed]
+  } catch {
+    return []
+  }
+
+  return rows
+    .filter(Boolean)
+    .map((r) => ({
+      pid: Number(r.ProcessId), ppid: Number(r.ParentProcessId), cmd: r.CommandLine || '',
+    }))
+}
+
+export function parsePsProcesses(text) {
+  return String(text)
+    .split(/\r?\n/)
+    .map((line) => /^\s*(\d+)\s+(\d+)\s+(.*\S)/.exec(line))
+    .filter(Boolean)
+    .map((m) => ({ pid: Number(m[1]), ppid: Number(m[2]), cmd: m[3] }))
+}
+
+// One call does it on POSIX — ps hands over pid, ppid and argv together.
+function listPosixTunnels(known, execFn) {
+  return parsePsProcesses(probe('ps', ['-Ao', 'pid=,ppid=,args='], execFn))
+    .filter((p) => !known.has(p.pid))
+}
+
+export function findOrphanTunnels({
+  known = new Set(), execFn = execFileSync, isAliveFn = isAlive, win = WIN,
+} = {}) {
+  const found = win ? listWindowsTunnels(known, execFn) : listPosixTunnels(known, execFn)
+  return found
+    .filter((p) => Number.isInteger(p.pid) && p.pid > 0)
+    .filter((p) => isOurTunnelCommand(p.cmd))
+    .filter((p) => isOrphanedTunnel(p, { isAliveFn, win }))
+}
+
+// Returns the pids it killed, so a caller can say so out loud: a preview the
+// user never stopped, silently disappearing, is exactly the kind of thing that
+// should be reported rather than done behind their back.
+export function reapOrphanTunnels({ killFn = killTree, ...opts } = {}) {
+  const orphans = findOrphanTunnels(opts)
+  for (const o of orphans) killFn(o.pid)
+  return orphans.map((o) => o.pid)
 }
 
 // Writes synchronously: cloudflared is low-volume, and a flushed-on-every-chunk
@@ -165,7 +294,15 @@ function attemptTunnel(localPort, {
       '--no-autoupdate',
       '--protocol', 'http2',
       '--url', `http://127.0.0.1:${localPort}`,
-    ], { stdio: ['ignore', 'pipe', 'pipe'] })
+      // The daemon that spawns this is itself detached, which on Windows means
+      // DETACHED_PROCESS — it has no console to hand down. Without
+      // windowsHide (CREATE_NO_WINDOW), Windows allocates cloudflared a brand
+      // new one, and a black conhost window appears on the desktop for every
+      // preview. Closing it does not just tidy the desktop: it delivers
+      // CTRL_CLOSE_EVENT to cloudflared, so the tunnel dies while the daemon
+      // lives on to its TTL and the phone's link starts returning 502. The
+      // output that window showed is already mirrored to the log sink below.
+    ], { stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true })
 
     let settled = false
     let buf = ''

@@ -54,7 +54,7 @@ expire it.
 |---|---|---|
 | `--port` | 5173 | The local port to expose |
 | `--ttl` | 30 | Minutes before the preview self-terminates (1–1440) |
-| `--grace` | 10 | Minutes the link stays exchangeable after its first use (0 = one-shot) |
+| `--grace` | same as `--ttl` | Minutes the link stays exchangeable after its first use, so by default it works for the preview's whole life (0 = one-shot) |
 | `--dev` | off | Expose a dev server rather than a build (larger attack surface) |
 | `--json` | off | Print `{status, url, port, expiresAt, …}` on stdout instead of prose |
 

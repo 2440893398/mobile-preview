@@ -514,7 +514,12 @@ async function cmdStart(args) {
   // clears the timer overflow that made the daemon die in 1ms.
   const ttl = numericFlag(parsed, 'ttl', 30, { integer: true, min: 1, max: 1440 })
   // 0 is valid and means one-shot (see proxy.js) — min is 0, not 1.
-  const grace = numericFlag(parsed, 'grace', 10, { integer: true, min: 0 })
+  // The default is the full --ttl, not a shorter window: the window opens on
+  // the first exchange, so ttl minutes from then always covers the rest of the
+  // preview's life — the printed link stays reusable until the preview itself
+  // expires. A 10-minute default used to 404 the same link on a second visit,
+  // which read as "the preview broke", not as security.
+  const grace = numericFlag(parsed, 'grace', ttl, { integer: true, min: 0 })
 
   sweepLegacy()
 

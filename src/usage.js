@@ -26,7 +26,7 @@ export const COMMANDS = {
     flags: {
       port: { value: '<n>', default: '5173', help: 'Local port to expose — the port your app already listens on' },
       ttl: { value: '<min>', default: '30', help: 'Minutes before the preview self-terminates (1–1440)' },
-      grace: { value: '<min>', default: '10', help: 'Minutes the link stays exchangeable after its first use (0 = one-shot)' },
+      grace: { value: '<min>', default: 'the --ttl value, i.e. reusable until expiry', help: 'Minutes the link stays exchangeable after its first use (0 = one-shot)' },
       dev: { help: 'Expose a dev server rather than a build (larger attack surface)' },
       json: { help: 'Print one machine-readable JSON object on stdout instead of prose' },
     },

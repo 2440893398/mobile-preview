@@ -135,7 +135,10 @@ export async function runDaemon({
   targetPort,
   dev = false,
   ttlMinutes = 30,
-  graceMinutes = 10,
+  // null means "match the ttl": the window opens on first exchange, so a ttl's
+  // worth of minutes from then always outlasts the preview — the link stays
+  // exchangeable for its whole life. Mirrors the CLI default (see cli.js).
+  graceMinutes = null,
   galleryDir,
   // Mirrors the spawnFn seam startTunnel already has. Without it every path
   // downstream of this call — the state write on success, the daemonPid
@@ -150,7 +153,7 @@ export async function runDaemon({
   const sessionToken = mintToken()
   const expiresAt = Date.now() + ttlMinutes * 60_000
 
-  const graceMs = graceMinutes * 60_000
+  const graceMs = (graceMinutes ?? ttlMinutes) * 60_000
 
   const proxy = createProxy({
     galleryDir,

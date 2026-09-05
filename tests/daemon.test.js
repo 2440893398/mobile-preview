@@ -60,6 +60,21 @@ test('runDaemon 接好了代理的 onWindowOpen：真实请求命中兑换路径
   })
 })
 
+test('runDaemon 不传 graceMinutes 时窗口默认等于 ttl：同一链接整个生命周期内可以反复兑换', async () => {
+  const port = 6302
+  await withFakeDaemon(port, { graceMinutes: undefined }, async (handle) => {
+    const s = state.read(port)
+    assert.equal(s.graceMs, 60 * 60_000, '默认窗口必须跟 ttlMinutes 一样长，而不是固定 10 分钟')
+
+    const url = `http://127.0.0.1:${s.proxyPort}/?t=${s.sessionToken}`
+    const first = await fetch(url, { redirect: 'manual' })
+    assert.equal(first.status, 302)
+    const second = await fetch(url, { redirect: 'manual' })
+    assert.equal(second.status, 302, '复用同一条链接不能再 404——这就是把默认窗口对齐 ttl 的目的')
+    handle.shutdown()
+  })
+})
+
 test('runDaemon 在隧道就绪前就占住槽位，但绝不提前落下令牌（附着的前提）', async () => {
   const port = 6304
   let duringEstablish = null

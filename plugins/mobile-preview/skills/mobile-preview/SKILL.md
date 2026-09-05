@@ -85,7 +85,9 @@ For a screen that only exists after an API call, use
 add `--full-page` to see past the first screen and `--strict` to make a page
 with errors fail the command.
 
-Use short lifetimes for sensitive apps, for example:
+By default the link stays exchangeable for the preview's whole `--ttl`, so
+reopening the same URL keeps working. For sensitive apps, use a short lifetime
+and optionally a tighter exchange window:
 
 ```powershell
 mp.cmd start --port 8080 --dev --ttl 120 --grace 20

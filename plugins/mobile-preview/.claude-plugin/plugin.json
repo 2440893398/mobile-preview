@@ -1,6 +1,6 @@
 {
   "name": "mobile-preview",
-  "version": "0.3.4",
+  "version": "0.3.5",
   "description": "Expose a local web app through a temporary authenticated phone preview.",
   "author": {
     "name": "mobile-preview contributors"

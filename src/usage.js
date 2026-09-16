@@ -72,6 +72,113 @@ export const COMMANDS = {
       json: { help: 'Print a machine-readable JSON array on stdout instead of prose' },
     },
   },
+  // The `secret` group: credentials the phone fills in and the AI may use
+  // but never read. Keyed as "secret <sub>" so parseArgs and --help treat a
+  // subcommand exactly like a top-level command; main() joins the two words.
+  'secret ask': {
+    summary: 'Send the phone a form for credentials the AI may use but never see',
+    args: '',
+    maxPositionals: 0,
+    flags: {
+      purpose: { value: '<text>', help: 'One line shown at the top of the form: what these values are for' },
+      field: { value: '<NAME[:kind]>', repeat: true, help: 'A field to collect. kind is secret (default, masked, redacted from output), text (visible, not redacted — a bucket name) or multiline (a textarea — a PEM key)' },
+      use: { value: '<command>', repeat: true, help: 'A command the AI intends to run with the values, e.g. "npm run deploy"; the user ticks each one on the phone' },
+      id: { value: '<id>', help: 'Ask an existing slot to approve more --use commands instead of opening a new one; the values are not re-entered' },
+      ttl: { value: '<min>', default: '120', help: 'Minutes the values stay in memory once they arrive (1–1440)' },
+      'form-ttl': { value: '<min>', default: '30', help: 'Minutes the form link stays open (1–60)' },
+      json: { help: 'Print one machine-readable JSON object on stdout instead of prose' },
+    },
+  },
+  'secret wait': {
+    summary: 'Block until the phone has submitted the form, then report names and fingerprints — never values',
+    args: '',
+    maxPositionals: 0,
+    flags: {
+      id: { value: '<id>', help: 'Which slot to wait on (default: the only active one)' },
+      timeout: { value: '<sec>', default: '540', help: 'Seconds to wait before giving up (the link stays open regardless)' },
+      json: { help: 'Print one machine-readable JSON object on stdout instead of prose' },
+    },
+  },
+  'secret run': {
+    summary: 'Run one of the approved commands with the values in its environment; output comes back redacted',
+    args: '-- <command…>',
+    maxPositionals: 0,
+    rest: true,
+    flags: {
+      id: { value: '<id>', help: 'Which slot to run with (default: the only active one)' },
+      cwd: { value: '<dir>', help: 'Working directory for the command (default: the current one)' },
+    },
+  },
+  'secret status': {
+    summary: 'List secret slots: fields, approved uses, time left — never values',
+    args: '',
+    maxPositionals: 0,
+    flags: {
+      json: { help: 'Print a machine-readable JSON array on stdout instead of prose' },
+    },
+  },
+  'secret forget': {
+    summary: 'Wipe a slot from memory now rather than at its TTL',
+    args: '',
+    maxPositionals: 0,
+    flags: {
+      id: { value: '<id>', help: 'Which slot to forget (default: the only active one)' },
+      all: { help: 'Forget every slot, including stale ones' },
+    },
+  },
+  // The `interaction` group: a decision the user makes on a page rather than
+  // in the chat, whose answer comes back as JSON the agent can act on.
+  'interaction ask': {
+    summary: 'Put a question on the phone as a page, and get a link to hand over',
+    args: '',
+    maxPositionals: 0,
+    flags: {
+      html: { value: '<file>', help: 'The page to serve — one self-contained HTML file, no external resources; it is checked before the link is issued' },
+      purpose: { value: '<text>', help: 'One line for `mp interaction status`: what this asks the user to decide' },
+      id: { value: '<id>', help: 'Replace an open question\'s page with a new one (a re-ask after "the premise is wrong"); bumps its revision' },
+      ttl: { value: '<min>', default: '120', help: 'Minutes the answer stays readable after it arrives (1–1440)' },
+      'form-ttl': { value: '<min>', default: '30', help: 'Minutes the link stays open (1–60)' },
+      json: { help: 'Print one machine-readable JSON object on stdout instead of prose' },
+    },
+  },
+  'interaction wait': {
+    summary: 'Block until the phone submits, then print the answer as JSON — a timeout is not an error',
+    args: '',
+    maxPositionals: 0,
+    flags: {
+      id: { value: '<id>', help: 'Which question to wait on (default: the only open one)' },
+      timeout: { value: '<sec>', default: '540', help: 'Seconds to wait before reporting "still waiting" and exiting 0 (the link stays open)' },
+      json: { help: 'Print one machine-readable JSON object on stdout instead of prose' },
+    },
+  },
+  'interaction status': {
+    summary: 'List open questions: stage, revision, how much is filled in so far',
+    args: '',
+    maxPositionals: 0,
+    flags: {
+      json: { help: 'Print a machine-readable JSON array on stdout instead of prose' },
+    },
+  },
+  'interaction close': {
+    summary: 'End a question now rather than at its TTL, and drop its answer',
+    args: '',
+    maxPositionals: 0,
+    flags: {
+      id: { value: '<id>', help: 'Which question to close (default: the only open one)' },
+      all: { help: 'Close every question, including stale ones' },
+    },
+  },
+}
+
+// What `mp <group> --help` says the group is for. A group with no entry here
+// is not a group: main() uses this to decide whether a first word is one.
+export const GROUPS = {
+  secret: 'credentials the phone fills in; the AI may use them but never read them',
+  interaction: 'a decision the user makes on a page; the answer comes back as JSON',
+}
+
+export function commandGroup(name) {
+  return Object.keys(COMMANDS).filter((c) => c.startsWith(`${name} `))
 }
 
 export function isValueFlag(spec, name) {
@@ -89,16 +196,42 @@ function renderFlags(flags) {
   const width = Math.max(...names.map((n) => flagSyntax(n, flags[n]).length))
   return names.map((n) => {
     const def = flags[n]
-    const tail = def.default === undefined ? def.help : `${def.help} (default ${def.default})`
+    const notes = []
+    if (def.default !== undefined) notes.push(`default ${def.default}`)
+    if (def.repeat) notes.push('repeatable')
+    const tail = notes.length ? `${def.help} (${notes.join('; ')})` : def.help
     return `  ${flagSyntax(n, def).padEnd(width)}  ${tail}`
   })
+}
+
+// `mp secret --help`: the group's subcommands, in the shape of the top-level
+// listing, so a model that has only seen `mp --help` finds nothing new here.
+export function renderGroupHelp(group) {
+  const names = commandGroup(group)
+  if (!names.length) return null
+
+  const width = Math.max(...names.map((c) => c.length))
+  return [
+    `mp ${group} — ${GROUPS[group] ?? ''}`,
+    '',
+    `usage: mp ${group} <subcommand> [options]`,
+    '',
+    'subcommands:',
+    ...names.map((name) => `  ${name.padEnd(width)}  ${COMMANDS[name].summary}`),
+    '',
+    `Run \`mp ${group} <subcommand> --help\` for one subcommand's options.`,
+  ].join('\n')
 }
 
 export function renderCommandHelp(name) {
   const spec = COMMANDS[name]
   if (!spec) return null
 
-  const usage = ['mp', name, spec.args, '[options]'].filter(Boolean).join(' ')
+  // Options go before a `--` separator, never after it: what follows `--`
+  // belongs to the command being run.
+  const usage = (spec.rest
+    ? ['mp', name, '[options]', spec.args]
+    : ['mp', name, spec.args, '[options]']).filter(Boolean).join(' ')
   // --help is accepted by every command, so it is rendered with the rest
   // rather than bolted on underneath as a second, differently-formatted list.
   const flags = { ...spec.flags, help: { help: 'Show this help' } }

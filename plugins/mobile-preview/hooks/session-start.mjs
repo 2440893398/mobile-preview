@@ -20,6 +20,8 @@
 import { execFileSync } from 'node:child_process'
 import process from 'node:process'
 import { pathToFileURL } from 'node:url'
+import { readPayload } from './hook-io.mjs'
+import { pruneMarks, writeMark } from './session-mark.mjs'
 
 // Happy runs Claude Code out of its own npm package, so the SDK binary path is
 // the marker that survives every launch mode we have seen. HAPPY_* variables
@@ -128,10 +130,25 @@ So, in this session:
   block, which many phone clients render unselectable.
 - When you need to look at the page yourself, use \`mp capture\`, rather than
   asking the user to open a browser they do not have.
-- Load the mobile-preview skill for everything else — prerequisites, starting
-  the app detached, diagnosing a blank preview, lifetimes and safety — instead
-  of improvising around the CLI.
-- If a turn has nothing to do with a local app, none of this applies.
+- When the task needs a credential from the user — a password, an access key,
+  a token, a database URL — never ask them to paste it into the chat. Run
+  \`mp secret ask --purpose "<why>" --field NAME --use "<command>"\`, hand over
+  the printed link the same bare way, then \`mp secret wait\` and
+  \`mp secret run -- <command>\`. The CLI never prints a value and there is no
+  command that does; do not go looking for one.
+- When the answer you need is a choice among three or more options, two or more
+  values, an ordering, or a review of more than a screen of content, do not
+  write it out in the chat. Put it on a page: write one self-contained HTML
+  file, run \`mp interaction ask --purpose "<why>" --html <file>\`, hand over the
+  printed link the same bare way, then \`mp interaction wait --id <id>\` and act
+  on the JSON it prints. A single yes/no stays in the chat.
+- \`mp interaction wait\` printing status "waiting" means they are still
+  reading — run it again; "expired_link" means reopen it with \`--id <id>\`.
+- Load the mobile-preview skill for everything else — prerequisites, a blank
+  preview, what an interaction page must contain, lifetimes and safety —
+  instead of improvising around the CLI.
+- If a turn has nothing to do with a local app, a credential or a decision
+  only they can make, none of this applies.
 
 In Windows PowerShell the command is \`mp.cmd\`; \`mp\` there is an alias for
 Move-ItemProperty.
@@ -139,8 +156,24 @@ Move-ItemProperty.
 
 // Both hosts read hookSpecificOutput.additionalContext; a hook that stays quiet
 // costs the session nothing, which is what a local session should get.
-function main() {
-  if (!detectRemoteSession().remote) return
+//
+// The detection is also written down before it is used. The two hooks that
+// fire later in the session — on a question the model is about to ask, and at
+// the end of a turn — need the same answer, and neither can afford to work it
+// out again: one of them runs on every single turn.
+async function main() {
+  // Nothing on stdin, or not JSON, leaves this null. The context below still
+  // goes out either way; only the note, which needs a session id to be keyed
+  // by, is skipped.
+  const payload = await readPayload()
+
+  const detected = detectRemoteSession()
+  if (payload?.session_id) {
+    pruneMarks()
+    writeMark(payload.session_id, { remote: detected.remote, via: detected.via, blocks: 0 })
+  }
+
+  if (!detected.remote) return
   process.stdout.write(JSON.stringify({
     hookSpecificOutput: {
       hookEventName: 'SessionStart',
@@ -153,5 +186,5 @@ function main() {
 // (C:\… vs file:///C:/…), and getting that wrong makes the hook print nothing
 // on the one platform this tool is used on most.
 if (process.argv[1] && pathToFileURL(process.argv[1]).href === import.meta.url) {
-  main()
+  await main()
 }

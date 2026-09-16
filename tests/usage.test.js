@@ -70,7 +70,8 @@ test('mp capture --help 只打印帮助，绝不真的去截图', () => {
 
 test('每个子命令都有自己的帮助，且列全它接受的参数', () => {
   for (const [name, spec] of Object.entries(COMMANDS)) {
-    const res = mp([name, '--help'])
+    // "secret ask" 是两个词：命令组 + 子命令。
+    const res = mp([...name.split(' '), '--help'])
     assert.equal(res.status, 0, `mp ${name} --help 应当成功: ${res.stderr}`)
     for (const flag of Object.keys(spec.flags)) {
       assert.match(res.stdout, new RegExp(`--${flag}\\b`), `mp ${name} --help 少了 --${flag}`)

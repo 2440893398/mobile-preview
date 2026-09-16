@@ -1,6 +1,6 @@
 ---
 name: mobile-preview
-description: Use whenever a locally running app has to be opened, shown, verified or screenshotted by someone who is not at this machine — every time a localhost or 127.0.0.1 URL would otherwise be handed to the user, and in any remote session (Happy, phone) where such an address cannot be opened at all. Triggers on "on my phone", "手机上看看", "看看效果", "preview", "预览一下", "send me the link", "把链接发我", "screenshot", "截图", "mobile UI", "localhost 打不开", "这个地址打不开", "stop the preview", "关掉预览", and on mp start / mp capture / mp stop.
+description: Use whenever a locally running app has to be opened, shown, verified or screenshotted by someone who is not at this machine — every time a localhost or 127.0.0.1 URL would otherwise be handed to the user, and in any remote session (Happy, phone) where such an address cannot be opened at all. Triggers on "on my phone", "手机上看看", "看看效果", "preview", "预览一下", "send me the link", "把链接发我", "screenshot", "截图", "mobile UI", "localhost 打不开", "这个地址打不开", "stop the preview", "关掉预览", and on mp start / mp capture / mp stop. Also use whenever such a session needs a credential from the user — a password, API key, AccessKey, token, database URL: "密码给你", "把 key 发你", "需要账号密码", "填一下配置", "credentials", "API key" — so it is collected with mp secret instead of typed into the chat. Also use whenever a decision belongs to the user and would otherwise be written out as a wall of text: three or more options to compare, several values to set, items to put in order, a draft to review — "你来定", "帮我选", "哪个好", "排个序", "看看这段改得对不对", "which one", "help me decide", "review this" — so it is asked with mp interaction as a page instead.
 ---
 
 # Mobile Preview
@@ -132,6 +132,151 @@ change, tell the user to reload the page on the phone.
 Repeat captures never overwrite each other: screenshots are numbered
 `shot-1.png`, `shot-2.png`, … within a preview's gallery, so a link already
 sent to the phone keeps showing what it showed when it was sent.
+
+## Credentials
+
+When the task needs a value only the user has — an access key, a password, a
+token, a database URL — do not ask for it in the chat. In a remote session the
+user cannot reach the machine, and a value typed into the chat lands in the
+transcript, in your context and in every later turn. Collect it through
+`mp secret` instead:
+
+1. Declare what you need and what you intend to do with it:
+
+   ```powershell
+   mp.cmd secret ask --purpose "配置 OSS 上传" --field OSS_ACCESS_KEY_ID --field OSS_ACCESS_KEY_SECRET --field OSS_BUCKET:text --use "npm run deploy" --use "node scripts/check-oss.js"
+   ```
+
+   A field is `secret` by default (masked, redacted from output); `:text` for a
+   value that is fine to see, such as a bucket name; `:multiline` for a PEM key.
+   Each `--use` is a command line, quoted as one argument. Declare every command
+   you will need now — each later addition costs the user another link.
+2. Return the printed link as a **bare line of its own**, exactly like a
+   preview link, and tell the user in one sentence what the form asks for.
+3. `mp.cmd secret wait --id <id>` blocks until the phone has submitted. It
+   reports each field's length and an 8-hex SHA-256 prefix, and the uses the
+   user actually ticked. There is no command that prints a value; do not go
+   looking for one, and do not ask the user to confirm a value by repeating it.
+4. Run the tool that needs the values:
+
+   ```powershell
+   mp.cmd secret run --id <id> -- npm run deploy
+   ```
+
+   The command must be, word for word, one the user ticked. The values arrive
+   as environment variables; stdout and stderr come back with the values
+   redacted; the exit code is passed through. Leave the key empty in `.env` —
+   `dotenv` does not override a variable already in the environment.
+5. Need another command? `mp.cmd secret ask --id <id> --use "<command>"` sends
+   the phone a link to approve just that; the values are not re-entered.
+6. `mp.cmd secret forget --id <id>` when the task is done. `mp.cmd secret status`
+   lists what is held.
+
+Never wrap the run in a shell (`sh -c`, `cmd /c`, `powershell -Command`,
+`node -e`) or pass anything that prints the environment: the hook refuses it,
+and it is the wrong shape anyway — the values are for the tool, not for you.
+If a tool can only read its credentials from a config file, run that tool's own
+`configure` step through `mp secret run` rather than writing the file yourself.
+
+Tell the user, once, that a leaked value is bounded by the credential itself:
+a sub-account scoped to one bucket, an STS token or a single-schema database
+user limits what any mistake can cost, and this workflow does not change that.
+
+## Decisions
+
+When the answer you need is a **choice among three or more options, two or more
+values, an ordering, or a review of more than a screen of content**, do not
+write it out in the chat. On a phone that is a wall of text the user has to
+read, hold in their head, and answer by typing — and what comes back is prose
+you then have to interpret. Put it on a page instead. A single yes/no, or one
+field, stays in the chat; this is a help, not a toll gate on every question.
+
+```powershell
+mp.cmd interaction ask --purpose "本周四件事的顺序" --html .\decide.html
+mp.cmd interaction wait --id i-7f3a1c
+```
+
+`ask` checks the page, serves it on a fresh tunnel and prints a link — hand it
+over as a **bare line of its own**, like a preview link. `wait` blocks until the
+phone submits, then prints the answers as JSON.
+
+### Writing the page
+
+One self-contained HTML file. If you have a design skill, follow it for the
+visual work; everything below is what this CLI requires regardless.
+
+**Explain before you ask.** Lead with why you need them, what each choice
+changes, and what it costs — for someone who knows nothing about the area.
+Prefer a picture to a paragraph: a timeline for "when", a same-axis comparison
+for a trade-off, a before/after for an edit, a relationship diagram for a
+dependency. Draw them in HTML/CSS or inline SVG. Fold the original wording and
+the evidence behind a `<details>` so it is there without being in the way.
+
+**Hard constraints** — `ask` refuses the page and tells you which one you hit:
+
+- One file, ≤ 300 KB, starting `<!doctype html>`, with `<html lang>` and a
+  viewport meta.
+- **No external resources at all**: no CDN script, stylesheet, web font or
+  image, and no `https:` inside CSS. The page is served under
+  `default-src 'none'` over a tunnel; anything fetched fails closed. That rules
+  out React and Babel, which only load from a CDN — write plain HTML, CSS and JS.
+- No `<script type="module">`, no `<form action>`, no `<base href>`.
+- Do not define `window.MP` or `window.MP_REQUEST`; both are injected.
+
+**Carrying the answers** — any one of these; the injected bridge collects them:
+
+- Give form controls a `name`. Checkbox groups become arrays, `type="number"`
+  becomes a number, `required` is enforced before an answer is accepted.
+- For a custom control — a sortable list, a diff with per-paragraph notes —
+  call `MP.set("order", [...])`, or put JSON in `data-mp-value` on an element
+  with a `name`.
+- Collection is scoped to `[data-mp-form]` if you mark one, otherwise `<body>`.
+
+**Submitting** — put `data-mp-submit` on the button. Add
+`data-mp-disposition="needs_clarification"` and `data-mp-reason="<why>"` to a
+second one so the user can say the question itself is wrong; that path does not
+require the form to be complete. Give them a "还没想好" option per item rather
+than forcing an answer. Mark an element `data-mp-receipt` and the receipt lands
+there instead of in a banner at the bottom.
+
+The bridge also saves a draft as they type — to the phone and back to this
+machine — so a reload keeps their work and `wait` can report how far they got.
+Restore a custom control from it on the `mp:ready` event via `MP.draft(name)`.
+
+### Waiting
+
+`wait` blocks for up to `--timeout` seconds (540 by default, sized for a tool
+call that may not block for more than ten minutes). It **exits 0 in every
+normal case** — read `status`, do not read the exit code:
+
+- `submitted` — the answer is in `answers`, with `disposition` and any
+  `reason`. Act on it.
+- `waiting` — they are still reading. Run `wait` again. `draft` shows what is
+  filled in so far, which is worth saying out loud: "你已经定了三条，还差排序".
+- `expired_link` — the link lapsed unanswered. The draft survives; reopen with
+  `mp.cmd interaction ask --id <id> --html <file>`.
+
+Re-asking with `--id` keeps one thread and bumps the revision, so a tab still
+showing the old page cannot answer the new question. Use it after a
+`needs_clarification`: respond to their objection first, then send the new page.
+
+Reading the same answer twice is fine and returns the same thing — if a
+compaction lost it, ask again rather than treating it as gone.
+`mp.cmd interaction status` lists what is open; `mp.cmd interaction close --id <id>`
+ends one early.
+
+### The hooks that trigger this
+
+Three, and they are a safety net, not the plan — recognising the moment
+yourself is cheaper than all of them:
+
+- The `SessionStart` context states the rule above in a remote session.
+- A `PreToolUse` hook refuses a question tool call carrying three explained
+  options, or two substantial questions, or one long one, and tells you to use
+  a page. It only fires in a remote session.
+- A `Stop` hook catches a long message that ends in a question when no page is
+  open, and asks for one. It gives up after twice in a session — if the message
+  really is not a decision for the user, say so in one line and stop.
 
 ## Safety
 

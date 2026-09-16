@@ -1,5 +1,5 @@
 {
-  "description": "Tells a Happy (phone) session, once at the top, that a localhost address is not something its user can open, and that the app has to go through `mp` first. No matcher: every way a session can start — startup, resume, clear, compact — needs the same warning, and a new source should not silently lose it. Prints nothing in a local session.",
+  "description": "SessionStart tells a Happy (phone) session, once at the top, that a localhost address is not something its user can open, that the app has to go through `mp` first, that credentials go through `mp secret` rather than the chat, and that a decision too big to answer in the chat goes through `mp interaction`. No matcher: every way a session can start — startup, resume, clear, compact — needs the same warning, and a new source should not silently lose it. It also writes down whether this session is a phone session, so the two hooks that fire later can read the answer instead of working it out again. Prints nothing in a local session. The Bash|PowerShell PreToolUse refuses the crudest ways an `mp secret run` could be turned into a dump of its own environment; it is the one control that still holds in bypassPermissions mode. The AskUserQuestion PreToolUse catches a question too large to answer in a chat before it is asked, and Stop catches the long write-up that ends in a question after the fact — the first is precise, the second is the only one that works on a host whose model writes such questions as prose instead of calling a tool.",
   "hooks": {
     "SessionStart": [
       {
@@ -7,6 +7,39 @@
           {
             "type": "command",
             "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/session-start.mjs\"",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Bash|PowerShell",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/pre-tool-use.mjs\"",
+            "timeout": 10
+          }
+        ]
+      },
+      {
+        "matcher": "AskUserQuestion|request_user_input",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/ask-question.mjs\"",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/stop.mjs\"",
             "timeout": 10
           }
         ]

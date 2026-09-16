@@ -16,6 +16,23 @@ mp.cmd stop --port 8080
 PowerShell reserves `mp` as an alias for `Move-ItemProperty`; use `mp.cmd` in
 PowerShell. Other shells can use `mp` directly.
 
+When a task needs a credential from the user — an access key, a password, a
+token — it is never asked for in the chat. `mp.cmd secret ask` sends the phone
+a form, `mp.cmd secret wait` reports that it was filled in (names and
+fingerprints only), and `mp.cmd secret run -- <command>` runs one of the
+commands the user ticked with the values in its environment and the output
+redacted. No command prints a value; the plugin's PreToolUse hook refuses the
+obvious ways of dumping the environment through a run.
+
+When a decision belongs to the user — three or more options to compare, several
+values to set, an order to settle, a draft to review — it is not written out in
+the chat either. `mp.cmd interaction ask --html <file>` checks a self-contained
+HTML page, serves it on a tunnel and prints a link; `mp.cmd interaction wait`
+blocks until the phone submits and prints the answers as JSON. A timeout there
+is not an error: it exits 0 with `status: "waiting"` and whatever is filled in
+so far, because someone thinking about a decision takes longer than a single
+call may block.
+
 Run `mp.cmd doctor` first when anything looks wrong — it reports each
 prerequisite separately, with the command that fixes it. `mp.cmd --help` lists
 the commands and `mp.cmd <command> --help` the options of one.
@@ -46,6 +63,15 @@ Under Claude Code the check is a few environment variables. Under Codex nothing
 in the environment says "happy", so the hook reads the process tree, where the
 happy CLI is an ancestor of the session; that path costs about 0.8s and is only
 taken when the environment could not answer.
+
+Two more hooks push a decision onto a page rather than into the chat: a
+`PreToolUse` on `AskUserQuestion` / `request_user_input`, which refuses a
+question carrying three explained options or two substantial ones, and a `Stop`
+hook that catches a long message ending in a question when no page is open. On
+Codex the second matters more than the first — that host's own instructions
+steer a must-answer question into prose instead of a tool call. Both stay
+silent in a local session, reading the verdict SessionStart already wrote to
+`sessions/<id>.json` rather than working it out again on every turn.
 
 **Codex will not run the hook until you trust it.** New and modified hooks are
 reviewed at startup in the Codex TUI; until then they are skipped silently.

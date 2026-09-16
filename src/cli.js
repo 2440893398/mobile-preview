@@ -10,8 +10,12 @@ import {
   establishBudgetMs, isAlive, reapOrphanTunnels, stageText,
 } from './tunnel.js'
 import { SESSION_TOKEN_QUERY_PARAM } from './proxy.js'
-import { COMMANDS, VERSION, renderCommandHelp, renderHelp } from './usage.js'
+import {
+  COMMANDS, GROUPS, VERSION, renderCommandHelp, renderGroupHelp, renderHelp,
+} from './usage.js'
 import { LOCALHOST_HARDCODE_HINT, formatDoctor, runChecks } from './doctor.js'
+import { createSecretCommands } from './secret-cli.js'
+import { createInteractionCommands } from './interaction-cli.js'
 
 // Covers daemon process startup, the proxy's listen() before it even calls
 // startTunnel, and the final state-file write — none of which are part of
@@ -58,6 +62,14 @@ function parseArgs(args, commandName) {
       continue
     }
 
+    // Everything after `--` belongs to the command being run, `--help` and
+    // all; it is handed over untouched and never parsed as ours.
+    if (a === '--') {
+      if (!spec.rest) fail(`\`mp ${commandName}\` does not take a -- separator. Run \`mp ${commandName} --help\`.`)
+      out.rest = args.slice(i + 1)
+      break
+    }
+
     if (!a.startsWith('--')) {
       positionals.push(a)
       continue
@@ -86,7 +98,8 @@ function parseArgs(args, commandName) {
     // auto-resolved a preview the user never named. Refuse instead: the
     // whole port-resolution design rests on never guessing.
     if (v === undefined || (inline === null && v.startsWith('--'))) fail(`--${name} needs a value`)
-    out[name] = v
+    if (def.repeat) (out[name] ||= []).push(v)
+    else out[name] = v
     if (inline === null) i += 1
   }
 
@@ -802,6 +815,24 @@ export async function main(argv) {
     return
   }
 
+  if (GROUPS[cmd]) {
+    const [sub, ...subArgs] = rest
+    if (sub === undefined || sub === '--help' || sub === '-h' || sub === 'help') {
+      console.log(renderGroupHelp(cmd))
+      return
+    }
+    const name = `${cmd} ${sub}`
+    const fn = groupCommands[cmd][sub]
+    if (!COMMANDS[name] || !fn) {
+      console.error(`unknown command ${JSON.stringify(name)}.\n`)
+      console.error(renderGroupHelp(cmd))
+      process.exit(1)
+    }
+    jsonMode = subArgs.includes('--json') && Boolean(COMMANDS[name].flags.json)
+    await fn(subArgs)
+    return
+  }
+
   const table = {
     start: cmdStart,
     capture: cmdCapture,
@@ -821,4 +852,15 @@ export async function main(argv) {
   jsonMode = rest.includes('--json') && Boolean(COMMANDS[cmd].flags.json)
 
   await fn(rest)
+}
+
+// Both groups get the same seams — the CLI's own output, argument parsing and
+// tunnel budget — so neither can drift into a second way of reporting a
+// failure or a second idea of how long a tunnel may take.
+const groupDeps = {
+  note, emitJson, fail, parseArgs, numericFlag, here: HERE, tunnelWaitBudgetMs,
+}
+const groupCommands = {
+  secret: createSecretCommands(groupDeps),
+  interaction: createInteractionCommands(groupDeps),
 }

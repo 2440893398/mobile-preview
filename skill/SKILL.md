@@ -1,6 +1,6 @@
 ---
 name: mobile-preview
-description: Use whenever a locally running app has to be opened, shown, verified or screenshotted by someone who is not at this machine — every time a localhost or 127.0.0.1 URL would otherwise be handed to the user, and in any remote session (Happy, phone) where such an address cannot be opened at all. Triggers on "on my phone", "手机上看看", "看看效果", "preview", "预览一下", "send me the link", "把链接发我", "screenshot", "截图", "mobile UI", "localhost 打不开", "这个地址打不开", "stop the preview", "关掉预览", and on mp start / mp capture / mp stop.
+description: Use whenever a locally running app has to be opened, shown, verified or screenshotted by someone who is not at this machine — every time a localhost or 127.0.0.1 URL would otherwise be handed to the user, and in any remote session (Happy, phone) where such an address cannot be opened at all. Triggers on "on my phone", "手机上看看", "看看效果", "preview", "预览一下", "send me the link", "把链接发我", "screenshot", "截图", "mobile UI", "localhost 打不开", "这个地址打不开", "stop the preview", "关掉预览", and on mp start / mp capture / mp stop. Also use whenever such a session needs a credential from the user — a password, API key, AccessKey, token, database URL: "密码给你", "把 key 发你", "需要账号密码", "填一下配置", "credentials", "API key" — so it is collected with mp secret instead of typed into the chat. Also use whenever a decision belongs to the user and would otherwise be written out as a wall of text: three or more options to compare, several values to set, items to put in order, a draft to review — "你来定", "帮我选", "哪个好", "排个序", "看看这段改得对不对", "which one", "help me decide", "review this" — so it is asked with mp interaction as a page instead.
 ---
 
 # mobile-preview
@@ -18,6 +18,43 @@ Use `mp start` to expose the local app, `mp capture` to collect screenshots and 
   whether or not the user names the plugin; the plugin's SessionStart hook
   detects the session from `CLAUDE_CODE_EXECPATH` / `HAPPY_*`, or from the
   process tree under Codex, and says so.
+
+## Credentials
+
+When the task needs a value only the user has — an access key, a password, a
+token — never ask for it in the chat. Run
+`mp secret ask --purpose "<why>" --field NAME --use "<command>"`, return the
+printed link as a bare line, then `mp secret wait --id <id>` and
+`mp secret run --id <id> -- <command>`. `wait` reports lengths and SHA-256
+prefixes, never values, and no command prints one. `run` only accepts a command
+the user ticked on the phone, word for word; more commands are approved with
+`mp secret ask --id <id> --use "<command>"`. Never wrap a run in `sh -c` /
+`cmd /c` / `node -e` or pass anything that prints the environment.
+`mp secret forget --id <id>` when done.
+
+## Decisions
+
+When the answer you need is a choice among three or more options, two or more
+values, an ordering, or a review of more than a screen of content, do not write
+it out in the chat — on a phone that is a wall of text to read and an answer to
+type, and what comes back is prose you then have to interpret. Write one
+self-contained HTML page, run `mp interaction ask --purpose "<why>" --html <file>`,
+return the printed link as a bare line, then `mp interaction wait --id <id>` and
+act on the JSON. A single yes/no stays in the chat.
+
+The page is checked before the link is issued: one file under 300 KB, **no
+external resources at all** (no CDN, no web font, so no React or Babel), no
+`<form action>`, no `<script type="module">`. Give controls a `name`, or call
+`MP.set(name, value)` for a custom one; put `data-mp-submit` on the button, and
+on a second one add `data-mp-disposition="needs_clarification"` so the user can
+say the question itself is wrong. Explain before you ask, and prefer a diagram
+drawn in HTML/CSS or inline SVG to a paragraph.
+
+`wait` exits 0 in every normal case — read `status`, not the exit code.
+`waiting` means they are still reading, so run it again; its `draft` says how
+far they got. `expired_link` means reopen with `--id <id>`. Re-asking with
+`--id` bumps the revision so a stale tab cannot answer the new question. The
+full page contract is in the plugin's skill.
 
 ## Workflow
 

@@ -1,7 +1,7 @@
 import {
   readFileSync, writeFileSync, renameSync, rmSync, mkdirSync, existsSync, readdirSync, statSync,
 } from 'node:fs'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 
 function stateDir() {
   return process.env.MP_STATE_DIR
@@ -30,6 +30,78 @@ export function galleryDir(port) {
   return join(stateDir(), 'gallery', String(port))
 }
 
+// ---- secret slots ----
+//
+// One file per `mp secret ask`, keyed by a short random id rather than a port:
+// a secret slot has no port of its own to be keyed by, and two asks in one
+// session must not collide. The file never holds a value — only names,
+// fingerprints, approved uses and the pids that own them. See the 2026-09-11
+// secret-relay design, §4.4.
+
+export const SECRET_ID_RE = /^s-[a-z0-9]{4,12}$/
+
+export function secretsDir() {
+  return join(stateDir(), 'secrets')
+}
+
+export function secretStatePath(id) {
+  return join(secretsDir(), `${id}.json`)
+}
+
+export function secretLogPath(id) {
+  return join(secretsDir(), `${id}.log`)
+}
+
+export function secretTunnelLogPath(id) {
+  return join(secretsDir(), `${id}.cloudflared.log`)
+}
+
+// Where the daemon that holds the values listens for `mp secret run`. A named
+// pipe on Windows, a unix socket elsewhere; either way it is reachable only
+// from this machine, and the protocol it speaks has no operation that returns
+// a value (design §4.5).
+export function secretIpcPath(id) {
+  if (process.platform === 'win32') return `\\\\.\\pipe\\mp-secret-${id}`
+  return join(secretsDir(), `${id}.sock`)
+}
+
+// ---- interaction slots ----
+//
+// One file per `mp interaction ask`, keyed like a secret slot and for the same
+// reason: a question has no port of its own, and two open at once must not
+// collide. Unlike a secret slot this file does hold the payload — the answer
+// is the whole point, and it has to outlive the process that collected it so a
+// late `wait` still finds it.
+
+export const INTERACTION_ID_RE = /^i-[a-z0-9]{4,12}$/
+
+export function interactionsDir() {
+  return join(stateDir(), 'interactions')
+}
+
+export function interactionStatePath(id) {
+  return join(interactionsDir(), `${id}.json`)
+}
+
+// Where `ask` stages the page for the daemon to pick up. Never a long-lived
+// file: the daemon reads it once and deletes it.
+export function interactionPagePath(id) {
+  return join(interactionsDir(), `${id}.page.html`)
+}
+
+export function interactionLogPath(id) {
+  return join(interactionsDir(), `${id}.log`)
+}
+
+export function interactionTunnelLogPath(id) {
+  return join(interactionsDir(), `${id}.cloudflared.log`)
+}
+
+export function interactionIpcPath(id) {
+  if (process.platform === 'win32') return `\\\\.\\pipe\\mp-interaction-${id}`
+  return join(interactionsDir(), `${id}.sock`)
+}
+
 // Distinguishes "no file" from "a file that will not parse" — read() alone
 // collapses both to null, which is exactly what let `mp start` double-spawn
 // over a truncated slot (Gap 1): it saw null, concluded there was nothing to
@@ -37,8 +109,7 @@ export function galleryDir(port) {
 // one. Callers that must react differently to the two (cmdStart) use this;
 // callers that only ever needed "is there something here I can use" keep
 // using read().
-export function readState(port) {
-  const f = statePath(port)
+function readStateAt(f) {
   if (!existsSync(f)) return { status: 'missing', value: null }
   try {
     return { status: 'ok', value: JSON.parse(readFileSync(f, 'utf8')) }
@@ -47,8 +118,28 @@ export function readState(port) {
   }
 }
 
+export function readState(port) {
+  return readStateAt(statePath(port))
+}
+
 export function read(port) {
   return readState(port).value
+}
+
+export function readSecretState(id) {
+  return readStateAt(secretStatePath(id))
+}
+
+export function readSecret(id) {
+  return readSecretState(id).value
+}
+
+export function readInteractionState(id) {
+  return readStateAt(interactionStatePath(id))
+}
+
+export function readInteraction(id) {
+  return readInteractionState(id).value
 }
 
 const LOCK_RETRY_MS = 20
@@ -73,8 +164,8 @@ function sleepSync(ms) {
 // The one thing every process agrees on atomically: O_EXCL creation either
 // succeeds or fails, with no window in between where two callers could both
 // believe they hold it. That, not any timing, is what serializes writers.
-function acquireLock(port) {
-  const lockPath = `${statePath(port)}.lock`
+function acquireLock(file, label) {
+  const lockPath = `${file}.lock`
   const deadline = Date.now() + LOCK_TIMEOUT_MS
 
   for (;;) {
@@ -98,7 +189,7 @@ function acquireLock(port) {
 
     if (Date.now() > deadline) {
       throw new Error(
-        `timed out waiting for the state lock on port ${port} (${lockPath}). `
+        `timed out waiting for the state lock on ${label} (${lockPath}). `
         + 'Another process may have died while holding it — delete the file if so.',
       )
     }
@@ -132,21 +223,19 @@ function acquireLock(port) {
 // Refuses to write over a corrupt slot rather than resurrecting it: merging
 // over `read() || {}` would quietly turn unparseable JSON — pids and all —
 // into a fresh record containing only this patch.
-export function write(port, patch) {
-  mkdirSync(previewsDir(), { recursive: true })
-  const lockPath = acquireLock(port)
+function writeAt(f, patch, { label, corruptHint }) {
+  mkdirSync(dirname(f), { recursive: true })
+  const lockPath = acquireLock(f, label)
 
   try {
-    const { status, value } = readState(port)
+    const { status, value } = readStateAt(f)
     if (status === 'corrupt') {
       throw new Error(
-        `preview state for port ${port} is corrupt (${statePath(port)}); `
-        + 'refusing to overwrite it. Run `mp stop --all` or delete the file.',
+        `${label} is corrupt (${f}); refusing to overwrite it. ${corruptHint}`,
       )
     }
     const base = value || {}
     const next = { ...base, ...(typeof patch === 'function' ? patch(base) : patch) }
-    const f = statePath(port)
     const tmp = `${f}.${process.pid}.tmp`
 
     try {
@@ -163,9 +252,76 @@ export function write(port, patch) {
   }
 }
 
+export function write(port, patch) {
+  return writeAt(statePath(port), patch, {
+    label: `preview state for port ${port}`,
+    corruptHint: 'Run `mp stop --all` or delete the file.',
+  })
+}
+
+export function writeSecret(id, patch) {
+  return writeAt(secretStatePath(id), patch, {
+    label: `secret state for ${id}`,
+    corruptHint: 'Run `mp secret forget --all` or delete the file.',
+  })
+}
+
+export function writeInteraction(id, patch) {
+  return writeAt(interactionStatePath(id), patch, {
+    label: `interaction state for ${id}`,
+    corruptHint: 'Run `mp interaction close --all` or delete the file.',
+  })
+}
+
 export function clear(port) {
   const f = statePath(port)
   if (existsSync(f)) rmSync(f, { force: true })
+}
+
+export function clearSecret(id) {
+  const f = secretStatePath(id)
+  if (existsSync(f)) rmSync(f, { force: true })
+}
+
+export function clearInteraction(id) {
+  for (const f of [interactionStatePath(id), interactionPagePath(id)]) {
+    if (existsSync(f)) rmSync(f, { force: true })
+  }
+}
+
+// Same contract as list(): never throws, skips what will not parse, and the
+// filename is the id of record.
+export function listSecrets() {
+  const dir = secretsDir()
+  if (!existsSync(dir)) return []
+
+  const out = []
+  for (const name of readdirSync(dir)) {
+    const m = /^(s-[a-z0-9]+)\.json$/.exec(name)
+    if (!m || !SECRET_ID_RE.test(m[1])) continue
+    const s = readSecret(m[1])
+    if (!s) continue
+    out.push({ ...s, id: m[1] })
+  }
+
+  return out.sort((a, b) => (a.createdAt ?? 0) - (b.createdAt ?? 0) || a.id.localeCompare(b.id))
+}
+
+// Same contract as listSecrets(): never throws, skips what will not parse.
+export function listInteractions() {
+  const dir = interactionsDir()
+  if (!existsSync(dir)) return []
+
+  const out = []
+  for (const name of readdirSync(dir)) {
+    const m = /^(i-[a-z0-9]+)\.json$/.exec(name)
+    if (!m || !INTERACTION_ID_RE.test(m[1])) continue
+    const s = readInteraction(m[1])
+    if (!s) continue
+    out.push({ ...s, id: m[1] })
+  }
+
+  return out.sort((a, b) => (a.createdAt ?? 0) - (b.createdAt ?? 0) || a.id.localeCompare(b.id))
 }
 
 // Never throws: status is the last thing a user has when everything else has

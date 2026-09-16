@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { readFileSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
@@ -10,7 +10,7 @@ import {
   detectRemoteSession,
   hasHappyAncestor,
 } from '../plugins/mobile-preview/hooks/session-start.mjs'
-import { COMMANDS } from '../src/usage.js'
+import { COMMANDS, commandGroup } from '../src/usage.js'
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url))
 const HOOK = join(ROOT, 'plugins', 'mobile-preview', 'hooks', 'session-start.mjs')
@@ -185,8 +185,10 @@ test('注入的文字要说清「不许直接给 localhost」和「用 mp start�
 // 这段文字是每个远程会话开局都会读到的，它教的命令必须是 CLI 真认的命令——
 // 文档那边已经有同样的约束（tests/usage.test.js），这里补上 hook 这一份。
 test('注入的文字里教的 mp 命令和参数都真实存在', () => {
-  for (const [, name] of REMOTE_CONTEXT.matchAll(/`mp(?:\.cmd)? ([a-z]+)/g)) {
-    assert.ok(COMMANDS[name], `hook 教了 mp ${name}，但 CLI 没有这个子命令`)
+  for (const [, name] of REMOTE_CONTEXT.matchAll(/`mp(?:\.cmd)? ([a-z]+(?: [a-z]+)?)/g)) {
+    // "mp secret ask" 是命令组 + 子命令；"mp secret wait" 后面跟着别的词时只匹配到组名。
+    const known = COMMANDS[name] || COMMANDS[name.split(' ')[0]] || commandGroup(name.split(' ')[0]).length
+    assert.ok(known, `hook 教了 mp ${name}，但 CLI 没有这个子命令`)
   }
   const supported = new Set(Object.values(COMMANDS).flatMap((s) => Object.keys(s.flags)))
   for (const [, flag] of REMOTE_CONTEXT.matchAll(/`--([a-z][a-z0-9-]*)/g)) {
@@ -206,6 +208,14 @@ test('hooks.json 在两个宿主都自动发现的位置，挂在 SessionStart �
   assert.match(entry.hooks[0].command, /session-start\.mjs/)
   assert.match(entry.hooks[0].command, /\$\{CLAUDE_PLUGIN_ROOT\}/,
     '写死绝对路径的 hook 换台机器就废了；Codex 也认这个变量名')
+
+  // 密钥那一路的 deny 挂在 PreToolUse 上，只看 Bash 与 PowerShell：hook 的 deny 是
+  // bypassPermissions 模式下唯一还生效的强制手段（设计 §2.1），挂错事件等于没挂。
+  const pre = hooks.hooks.PreToolUse[0]
+  assert.equal(pre.matcher, 'Bash|PowerShell')
+  assert.match(pre.hooks[0].command, /pre-tool-use\.mjs/)
+  assert.match(pre.hooks[0].command, /\$\{CLAUDE_PLUGIN_ROOT\}/)
+  assert.ok(existsSync(join(ROOT, 'plugins', 'mobile-preview', 'hooks', 'pre-tool-use.mjs')))
 
   // 两边都靠自动发现。谁要是再在 manifest 里显式指一遍同一个文件，就有可能被
   // 注册两次、同一段话注入两次。

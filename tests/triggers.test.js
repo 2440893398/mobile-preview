@@ -442,3 +442,17 @@ test('注入的文字里要有「页面得画出来」这条——它决定页�
     '只读注入的模型不会去加载 skill；这条要是只写在 skill 里，等于没写',
   )
 })
+
+test('中文的长篇和英文的长篇被同等对待——不然这道兜底对中文用户等于没装', () => {
+  // 同一段话的两种语言。字符数差三倍，要读的东西一样多。
+  const zh = `${'把这几条排一下优先级，每条我都写清楚了代价。'.repeat(40)}\n\n你想先做哪个？`
+  const en = `${'Please rank these items, I have written out the cost of each one. '.repeat(24)}\n\nWhich would you like first?`
+
+  assert.ok(zh.length < 1_000, '这段中文只有几百个字符，按字符数根本够不着门槛')
+  assert.equal(looksLikeAnUnansweredDecision(zh), true, '中文的长篇也要拦')
+  assert.equal(looksLikeAnUnansweredDecision(en), true, '英文的长篇照旧拦')
+
+  // 短的还是不拦，两种语言都一样。
+  assert.equal(looksLikeAnUnansweredDecision('两个方案你选哪个？'), false)
+  assert.equal(looksLikeAnUnansweredDecision('Which of the two do you prefer?'), false)
+})

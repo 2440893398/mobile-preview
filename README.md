@@ -340,18 +340,27 @@ question at the precise moment the model asks it, and denies it with the
 instruction to use a page. It measures shape, never subject: three or more
 options each carrying a sentence of explanation, or two substantial questions
 at once, or one long one. A hook cannot tell whether a decision is important,
-and one that guessed would be wrong in both directions. The thresholds weight
-CJK characters at three, because the same sentence runs about 26 characters in
-Chinese and 123 in English, and a single character count would have meant this
-never fired for a Chinese-speaking user.
+and one that guessed would be wrong in both directions.
+
+Every threshold in both hooks weighs CJK characters at three (`hooks/cjk.mjs`),
+because the same sentence runs about 26 characters in Chinese and 123 in
+English, and a single character count would have meant this never fired for a
+Chinese-speaking user. It is shared rather than written twice because it *was*
+written twice: 0.5.0 weighed the question tool's thresholds and left Stop
+counting raw characters, so the one trigger that works on Codex needed a
+message three times too long before it fired — on the machine where the
+questions are written in Chinese.
 
 A **Stop** hook is the fallback, and on Codex the main line of defence: that
 host's own instructions tell it to write a question it must have answered as
 plain prose rather than call a tool, so the PreToolUse path never sees it. Stop
 reads the finished message instead — long, ending in a question or a list, with
-no interaction page open — and asks for the page. Those tokens are already
-spent, which is why it is third; it gives up after twice in a session rather
-than arguing with a model that has a reason to write that way.
+no interaction page *waiting for an answer* — and asks for the page. A record
+that has already been answered does not count: it outlives the answer by its
+whole TTL, and counting it would silence this hook for the rest of the
+afternoon. Those tokens are already spent, which is why it is third; it gives
+up after twice in a session rather than arguing with a model that has a reason
+to write that way.
 
 All three stay silent in a local session, where the host's own prompt in the
 terminal is already a good answer. Working that out costs a process-tree walk

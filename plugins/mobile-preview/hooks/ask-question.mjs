@@ -2,6 +2,7 @@ import process from 'node:process'
 import { pathToFileURL } from 'node:url'
 import { readPayload } from './hook-io.mjs'
 import { readMark } from './session-mark.mjs'
+import { weigh } from './cjk.mjs'
 
 // The second of three triggers, and the most precise one: the model has
 // already decided it needs the person, and is about to put the question in
@@ -29,15 +30,6 @@ const SUBSTANTIAL = 250
 // One question that simply takes this much reading.
 const LONG = 400
 
-// Han, kana and the full-width punctuation that comes with them, weighted so
-// that one threshold means the same amount of reading in either language.
-// Counting raw characters would make every Chinese question look trivial
-// beside the English one saying the same thing — the same sentence runs about
-// 26 characters in Chinese and 123 in English — and this feature would
-// effectively not be installed for a Chinese-speaking user. Three is the ratio
-// by reading time, not by character count.
-const CJK_WEIGHT = 3
-const CJK = /[　-〿぀-ヿ㐀-䶿一-鿿豈-﫿＀-￯]/
 
 const REASON = 'This question is large enough that answering it in the chat means reading a wall of text. '
   + 'Put it on a page instead: write one self-contained HTML file and run '
@@ -54,11 +46,7 @@ function strings(value, depth = 0) {
 }
 
 function size(value) {
-  let n = 0
-  for (const s of strings(value)) {
-    for (const c of s) n += CJK.test(c) ? CJK_WEIGHT : 1
-  }
-  return n
+  return strings(value).reduce((n, s) => n + weigh(s), 0)
 }
 
 // Both hosts nest the questions under `questions`; what sits inside one

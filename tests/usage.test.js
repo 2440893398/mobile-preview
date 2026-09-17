@@ -242,13 +242,48 @@ const SKILL_FILES = [
   ['plugins', 'mobile-preview', 'skills', 'mobile-preview', 'SKILL.md'],
 ]
 
-function skillDescription(text) {
+function frontmatter(text) {
   const front = /^---\r?\n([\s\S]*?)\r?\n---/.exec(text)
   assert.ok(front, 'SKILL.md 必须有 frontmatter')
-  const line = /^description:\s*(.+)$/m.exec(front[1])
-  assert.ok(line, 'SKILL.md 必须有 description')
-  return line[1].trim()
+  return front[1]
 }
+
+// 按 YAML 读，不按正则读。这个区别不是学术问题：0.5.0 往 description 里塞了一句
+// `database URL: "密码给你"`，正则照样匹配得到，YAML 却在那个 `: ` 上直接报错——
+// 两份 skill 于是整段 frontmatter 作废，name 和 description 一起丢掉，模型再也没
+// 被告知过什么时候该用这个技能。而当时的测试全过。
+function scalar(raw) {
+  const v = raw.trim()
+  if (v.startsWith("'")) {
+    assert.ok(v.endsWith("'") && v.length > 1, `单引号标量没闭合：${v.slice(0, 40)}…`)
+    return v.slice(1, -1).replaceAll("''", "'")
+  }
+  if (v.startsWith('"')) {
+    assert.ok(v.endsWith('"') && v.length > 1, `双引号标量没闭合：${v.slice(0, 40)}…`)
+    return v.slice(1, -1).replaceAll('\\"', '"')
+  }
+  assert.ok(!v.includes(': '), `没加引号的值里有 \`: \`，YAML 会当成嵌套映射，整段 frontmatter 作废：${v.slice(0, 60)}…`)
+  return v
+}
+
+function skillDescription(text) {
+  const line = /^description:\s*(.+)$/m.exec(frontmatter(text))
+  assert.ok(line, 'SKILL.md 必须有 description')
+  return scalar(line[1])
+}
+
+test('两份 skill 的 frontmatter 真的解析得出来——解析不出来就等于没有 description', () => {
+  for (const parts of SKILL_FILES) {
+    const seen = {}
+    for (const line of frontmatter(readRoot(...parts)).split(/\r?\n/)) {
+      const m = /^([a-zA-Z][\w-]*):(.*)$/.exec(line)
+      if (m) seen[m[1]] = scalar(m[2])
+    }
+    const where = parts.join('/')
+    assert.ok(seen.name, `${where} 的 name 没解析出来`)
+    assert.ok(seen.description, `${where} 的 description 没解析出来`)
+  }
+})
 
 test('两份 skill 的 description 都带着用户真会说的触发词', () => {
   // 中英各留一组：这台机器上的人用中文提要求，插件本身是英文的。

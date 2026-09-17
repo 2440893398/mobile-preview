@@ -2,6 +2,7 @@ import process from 'node:process'
 import { pathToFileURL } from 'node:url'
 import { readPayload } from './hook-io.mjs'
 import { hasOpenInteraction, readMark, writeMark } from './session-mark.mjs'
+import { weigh } from './cjk.mjs'
 
 // The last of three triggers, and the only one that fires after the fact.
 //
@@ -20,7 +21,14 @@ import { hasOpenInteraction, readMark, writeMark } from './session-mark.mjs'
 // open; and it gives up after two attempts in a session rather than arguing
 // with a model that has a reason to write this way.
 
+// Weighted, not counted: the same message runs about a third as many
+// characters in Chinese, so a raw 1500 would have meant this hook needed a
+// message three times longer before it fired — and on Codex it is the only
+// trigger there is.
 const LONG_MESSAGE = 1_500
+// The tail stays a raw slice. All it looks for is whether the message ends by
+// asking, and a window that is generous in CJK errs toward firing, which is
+// the safe direction for a hook that only ever asks for a better page.
 const TAIL = 300
 const MAX_BLOCKS = 2
 
@@ -38,7 +46,7 @@ const REASON = 'That message asks the user to decide, and it is long enough that
 
 export function looksLikeAnUnansweredDecision(message) {
   const text = String(message ?? '')
-  if (text.length <= LONG_MESSAGE) return false
+  if (weigh(text) <= LONG_MESSAGE) return false
   const tail = text.slice(-TAIL)
   return ASKS.test(tail) || ENUMERATED.test(tail)
 }

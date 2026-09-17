@@ -268,3 +268,75 @@ test('interactionHealth 能分辨缺失、出错与过期', () => {
   assert.equal(interactionHealth({ daemonPid: 1 }).reason, 'expired')
   assert.equal(interactionHealth({ daemonPid: process.pid, expiresAt: Date.now() + 1000 }).active, true)
 })
+
+// —— 0.5.1 评审修复 ——
+
+test('上一次重开失败留下的错误，不能被下一次重开读成自己的失败', async () => {
+  let calls = 0
+  await withDaemon({
+    startTunnelFn: async () => {
+      calls += 1
+      if (calls === 2) throw Object.assign(new Error('tunnel boom'), { reason: 'test' })
+      return { url: `https://fake-${calls}.trycloudflare.com`, pid: 999_990 }
+    },
+  }, async ({ handle, id }) => {
+    await answerOn(id, handle, {})
+    await until(() => state.readInteraction(id).stage === 'submitted')
+
+    // 第一次重开：隧道起不来，错误落在记录上。
+    await ipcCall(handle.ipcPath, { op: 'reopen', html: pageWith('二') })
+    await until(() => state.readInteraction(id).reopenError, 5_000)
+
+    // 第二次重开：`ask --id` 收到 ok 之后立刻开始盯记录，此刻必须已经看不到
+    // 上一次的错误——否则它会把一条正在起来的链接报成失败，而那条链接谁也
+    // 不会再打印一次。
+    await ipcCall(handle.ipcPath, { op: 'reopen', html: pageWith('三') })
+    assert.equal(state.readInteraction(id).reopenError, null)
+    await until(() => state.readInteraction(id).stage === 'collecting', 5_000)
+    assert.equal(state.readInteraction(id).reopenError, null)
+  })
+})
+
+test('同一个页面重开（链接过期后再发一次），草稿留着——问题没变，他们填的还是答案', async () => {
+  await withDaemon({ formTtlMinutes: 0.02 }, async ({ handle, id }) => {
+    await answerOn(id, handle, { path: '/draft', answers: { city: 'sz' } })
+    await until(() => state.readInteraction(id).draft)
+    await until(() => state.readInteraction(id).stage === 'expired_link', 5_000)
+
+    await ipcCall(handle.ipcPath, { op: 'reopen', html: PAGE })
+    await until(() => state.readInteraction(id).stage === 'collecting', 5_000)
+    assert.deepEqual(state.readInteraction(id).draft.answers, { city: 'sz' })
+  })
+})
+
+test('换了一版页面再重开，草稿清掉——填的是另一个问题的答案了', async () => {
+  await withDaemon({ formTtlMinutes: 0.02 }, async ({ handle, id }) => {
+    await answerOn(id, handle, { path: '/draft', answers: { city: 'sz' } })
+    await until(() => state.readInteraction(id).draft)
+    await until(() => state.readInteraction(id).stage === 'expired_link', 5_000)
+
+    await ipcCall(handle.ipcPath, { op: 'reopen', html: pageWith('二') })
+    await until(() => state.readInteraction(id).stage === 'collecting', 5_000)
+    assert.equal(state.readInteraction(id).draft, null)
+  })
+})
+
+test('GET /state 把这台机器上的草稿交回页面——换个浏览器打开的人不该从头填', async () => {
+  await withDaemon({}, async ({ handle, id }) => {
+    await answerOn(id, handle, { path: '/draft', answers: { city: 'sz' } })
+    await until(() => state.readInteraction(id).draft)
+
+    const s = state.readInteraction(id)
+    const base = `http://127.0.0.1:${handle.formPort()}`
+    const ex = await fetch(`${base}/?__mp_token=${s.sessionToken}`, { redirect: 'manual' })
+    const cookie = ex.headers.get('set-cookie').split(';')[0]
+    const res = await fetch(`${base}/state`, { headers: { Cookie: cookie } })
+    assert.equal(res.status, 200)
+    const body = await res.json()
+    assert.equal(body.status, 'waiting')
+    assert.deepEqual(body.draft.answers, { city: 'sz' })
+
+    // 没有令牌的人当然什么也拿不到。
+    assert.equal((await fetch(`${base}/state`)).status, 404)
+  })
+})

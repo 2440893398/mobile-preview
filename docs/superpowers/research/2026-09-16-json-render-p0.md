@@ -80,6 +80,11 @@ CSP 验证：页面头部沿用 secret-form 的 `default-src 'none'; script-src 
 
 ## 决定
 
+> **这条结论已经作废。** 同日的[页面回传约定](../specs/2026-09-16-interaction-page-contract.md)取代了
+> json-render 路线：最终实现是"模型写单文件 HTML + CLI 注入桥接"，仓库里没有 json-render 依赖。
+> 下面保留原判断，是为了记住它建立在哪些实测数字上——如果以后要回到 schema 渲染，
+> 被这些数字否掉的是"json-render + zod + svelte 这套库"，不是 schema 这个想法本身。
+
 **采用 json-render，附三个条件。**
 
 1. 生成后先在 CLI 端跑自写预检（props + 环），再交给页面；不依赖 `catalog.validate`。

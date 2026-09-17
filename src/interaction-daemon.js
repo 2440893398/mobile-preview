@@ -69,6 +69,10 @@ export async function runInteractionDaemon({
   let digest = contentDigest(page)
   let revision = 1
   let response = null
+  // Kept here as well as in the state file so a reopened page can be served
+  // with it: the phone's own copy is in localStorage, which a different
+  // browser — the in-app one, then Safari — does not share.
+  let draft = null
   const receipts = new Map()
   let form = null
   let ipc = null
@@ -138,7 +142,8 @@ export async function runInteractionDaemon({
 
   function onDraft({ answers }) {
     if (response) return
-    patch({ draft: { answers, revision, savedAt: Date.now() } })
+    draft = { answers, revision, savedAt: Date.now() }
+    patch({ draft })
   }
 
   function onSubmit({ responseId, disposition, answers, reason }) {
@@ -153,6 +158,7 @@ export async function runInteractionDaemon({
 
     const receiptId = randomUUID()
     receipts.set(responseId, receiptId)
+    draft = null
     response = {
       receiptId, responseId, disposition, answers, reason, revision, receivedAt: Date.now(),
     }
@@ -181,6 +187,7 @@ export async function runInteractionDaemon({
       sessionHash: hashToken(sessionToken),
       expiresAt: formExpiresAt,
       graceMs: formExpiresAt - Date.now(),
+      draft: () => draft,
       onDraft,
       onSubmit,
     })
@@ -270,7 +277,13 @@ export async function runInteractionDaemon({
       response = null
     }
     page = next
-    digest = contentDigest(page)
+    const nextDigest = contentDigest(page)
+    // The same page again — a link that lapsed while they were thinking, sent
+    // back out. What they had typed is still an answer to this exact
+    // question, so it survives; a different page makes it answers to a
+    // question nobody asked.
+    if (nextDigest !== digest) draft = null
+    digest = nextDigest
     revision += 1
     patch({
       revision,
@@ -278,9 +291,13 @@ export async function runInteractionDaemon({
       pageBytes: verdict.bytes,
       warnings: verdict.warnings,
       response: null,
-      draft: null,
+      draft,
       stage: 'starting',
       stageAt: Date.now(),
+      // Cleared here rather than in openForm: the `ok` above has already let
+      // `mp interaction ask` start watching this record, and a failure left
+      // over from the previous attempt would be read as this one's.
+      reopenError: null,
     })
     audit('reopened', { revision })
     try {

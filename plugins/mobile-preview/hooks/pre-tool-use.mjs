@@ -12,6 +12,7 @@
 
 import process from 'node:process'
 import { pathToFileURL } from 'node:url'
+import { readPayload } from './hook-io.mjs'
 
 const SECRET_RUN = /\bmp(?:\.cmd)?\s+secret\s+run\b/i
 
@@ -166,14 +167,12 @@ export function decide({ tool_name: tool, tool_input: input } = {}) {
 }
 
 async function main() {
-  let text = ''
-  for await (const chunk of process.stdin) text += chunk
-  let payload
-  try {
-    payload = JSON.parse(text)
-  } catch {
-    return
-  }
+  // Bounded, like the other hooks: a host that hands over an inherited
+  // terminal instead of closing stdin would leave this pending until the
+  // timeout killed it, and the deny — the one control that still holds in
+  // bypassPermissions mode — would simply never be printed.
+  const payload = await readPayload()
+  if (!payload) return
   const verdict = decide(payload)
   if (!verdict) return
   process.stdout.write(`${JSON.stringify({

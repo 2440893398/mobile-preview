@@ -23,6 +23,7 @@ export function createInteractionServer({
   sessionHash,
   expiresAt,
   graceMs = 10 * 60_000,
+  draft = () => null,
   onDraft = null,
   onSubmit,
   maxBodyBytes = MAX_ANSWER_BYTES,
@@ -99,8 +100,11 @@ export function createInteractionServer({
   async function handleSubmit(req, res) {
     // One answer at a time, and one answer in the end. A double-tap on the
     // phone arrives as two requests; `busy` stops the second before it can
-    // mint a second receipt for the same responseId.
-    if (busy) return notFound(res)
+    // mint a second receipt for the same responseId. It says so rather than
+    // 404ing: this is the retry the receipt memo exists to serve, and a page
+    // that read it as a failure would tell someone their answer was lost a
+    // moment before the first request lands and says it arrived.
+    if (busy) return json(res, 409, { status: 'busy', error: '正在提交，稍等一下' })
     busy = true
     try {
       const payload = await body(req, res)
@@ -161,6 +165,14 @@ export function createInteractionServer({
       })
       res.end(page)
       return undefined
+    }
+    // The draft this machine holds, for a page that cannot find one on the
+    // phone: a link opened first in a chat app's built-in browser and then
+    // again in Safari is two localStorages and one person, who typed their
+    // answer once.
+    if (req.method === 'GET' && url.pathname === '/state') {
+      if (answered) return notFound(res)
+      return json(res, 200, { status: 'waiting', requestId, revision, draft: draft() })
     }
     if (req.method === 'POST' && url.pathname === '/draft') return handleDraft(req, res)
     if (req.method === 'POST' && url.pathname === '/submit') return handleSubmit(req, res)

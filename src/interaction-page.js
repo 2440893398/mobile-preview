@@ -25,8 +25,15 @@ export const MAX_ANSWER_BYTES = 256 * 1024
 // form: a request that can only be answered cannot be corrected.
 export const DISPOSITIONS = ['answered', 'needs_clarification', 'declined', 'deferred']
 
-const EXTERNAL_REF = /<(script|link|img|iframe|video|audio|source|object|embed)\b[^>]*\s(?:src|href)\s*=\s*["']([^"']+)["']/gi
+// The unquoted branch is not pedantry: `<script src=https://cdn…></script>`
+// is exactly how a hand-written page tends to come out, and a check that let
+// it through would fail on the phone, silently, where the reason cannot be
+// read — which is the one thing this file exists to prevent.
+const EXTERNAL_REF = /<(script|link|img|iframe|video|audio|source|object|embed)\b[^>]*\s(?:src|href)\s*=\s*(?:["']([^"']*)["']|([^\s>"'`]+))/gi
 const EXTERNAL_URL = /^(?:https?:)?\/\//i
+// `url(//fonts…)` inherits the page's scheme and fetches just as much as
+// `url(https://fonts…)` does.
+const EXTERNAL_CSS_URL = /(?:@import\s+(?:url\()?|url\()\s*["']?(?:https?:)?\/\//i
 
 export function contentDigest(html) {
   return createHash('sha256').update(String(html)).digest('hex').slice(0, 16)
@@ -39,6 +46,30 @@ export function jsonForScript(value) {
     .replaceAll('<', '\\u003c')
     .replaceAll(' ', '\\u2028')
     .replaceAll(' ', '\\u2029')
+}
+
+// Roughly a screen and a half of reading. Past this, a page that has drawn
+// nothing is a chat message with margins — which is the thing this whole
+// command exists to replace, so it is worth saying out loud even though it
+// cannot be a hard failure: some questions really are text.
+const PROSE_LIMIT = 260
+// One CJK character carries about as much as an English word; nothing here
+// needs to be more precise than that.
+const CJK_CHAR = /[　-〿぀-ヿ㐀-䶿一-鿿豈-﫿＀-￯]/g
+
+export function prose(html) {
+  const text = String(html ?? '')
+    .replace(/<(script|style|svg)\b[\s\S]*?<\/\1>/gi, ' ')
+    .replace(/<[^>]*>/g, ' ')
+    .replace(/&[a-z]+;|&#\d+;/gi, ' ')
+  const cjk = (text.match(CJK_CHAR) || []).length
+  const latin = text.replace(CJK_CHAR, ' ').split(/\s+/).filter(Boolean).length
+  return {
+    words: cjk + latin,
+    // `<figure>` is how a diagram drawn in HTML and CSS says it is one; inline
+    // SVG says it by being one.
+    drawn: /<svg\b/i.test(String(html ?? '')) || /<figure\b/i.test(String(html ?? '')),
+  }
 }
 
 export function checkPage(html) {
@@ -66,13 +97,14 @@ export function checkPage(html) {
   // that this page was opened to a third party.
   const external = []
   for (const m of text.matchAll(EXTERNAL_REF)) {
-    if (EXTERNAL_URL.test(m[2])) external.push(m[2])
+    const url = m[2] ?? m[3] ?? ''
+    if (EXTERNAL_URL.test(url)) external.push(url)
   }
   if (external.length) {
     problems.push(`external resources are not allowed, found: ${[...new Set(external)].slice(0, 5).join(', ')}. `
       + 'Inline the styles and scripts; draw diagrams with HTML/CSS or inline SVG')
   }
-  if (/@import\s+(?:url\()?\s*["']?https?:/i.test(text) || /url\(\s*["']?https?:/i.test(text)) {
+  if (EXTERNAL_CSS_URL.test(text)) {
     problems.push('a stylesheet fetches an external URL; inline it instead')
   }
   if (/<base\b[^>]*\shref\s*=/i.test(text)) {
@@ -106,6 +138,15 @@ export function checkPage(html) {
   if (!/data-mp-receipt/.test(text)) {
     warnings.push('no `[data-mp-receipt]` element; the bridge will append a fixed banner instead of placing the receipt')
   }
+  const { words, drawn } = prose(text)
+  if (words > PROSE_LIMIT && !drawn) {
+    warnings.push(
+      `this page is about ${words} words of prose with nothing drawn (no \`<svg>\`, no \`<figure>\`). `
+      + 'A page exists to show what a chat cannot say: draw the comparison, the order, the before and '
+      + 'after, and cut the paragraphs down to a line each. Paragraphs in a nicer font are still a wall '
+      + 'of text, and the user has to read them on a phone',
+    )
+  }
 
   return { ok: problems.length === 0, problems, warnings, bytes }
 }
@@ -117,11 +158,16 @@ export const BRIDGE_JS = `
 (function () {
   'use strict'
   var R = window.MP_REQUEST || {}
-  var KEY = 'mp:draft:' + R.requestId + ':' + R.revision
+  // Keyed by the page, not by the revision: the same question sent out again
+  // after its link lapsed is the same page, and what they typed into it is
+  // still their answer. A different page gets a different key, which is the
+  // part that matters.
+  var KEY = 'mp:draft:' + R.requestId + ':' + (R.contentDigest || R.revision)
   var store = {}
   var responseId = null
   var done = false
   var saveTimer = null
+  var recovered = null
 
   function all(sel, root) {
     return Array.prototype.slice.call((root || document).querySelectorAll(sel))
@@ -289,12 +335,18 @@ export const BRIDGE_JS = `
         document.dispatchEvent(new CustomEvent('mp:submitted', { detail: res }))
         return res
       }
+      // The other copy of this same submission is still in flight, or has
+      // already succeeded. Either way it, not this one, has the last word:
+      // saying "it failed" here would be saying it about an answer that
+      // arrived.
+      if (done || (res && res.status === 'busy')) return res
       buttons.forEach(function (b) { b.disabled = false })
       tell(res && res.status === 'stale'
         ? '这个页面不是最新的了，回到聊天里要一条新链接。'
         : '没有提交成功，再试一次。', false)
       return res
     })['catch'](function () {
+      if (done) return null
       buttons.forEach(function (b) { b.disabled = false })
       tell('提交失败，可能是网络断了。恢复后再点一次，填的内容还在。', false)
       return null
@@ -305,8 +357,7 @@ export const BRIDGE_JS = `
     set: function (name, value) { store[name] = value; save() },
     get: function (name) { return has(store, name) ? store[name] : collect()[name] },
     draft: function (name) {
-      var d = null
-      try { d = JSON.parse(localStorage.getItem(KEY) || 'null') } catch (e) {}
+      var d = recovered || local()
       if (!d || !d.answers) return undefined
       return d.answers[name]
     },
@@ -314,12 +365,55 @@ export const BRIDGE_JS = `
     submit: submit
   }
 
-  function start() {
-    var d = null
-    try { d = JSON.parse(localStorage.getItem(KEY) || 'null') } catch (e) {}
+  function local() {
+    try { return JSON.parse(localStorage.getItem(KEY) || 'null') } catch (e) { return null }
+  }
+
+  // The phone's copy first — it is the newest, and it is already here. Only
+  // when there is none does the machine's copy matter, and then it matters a
+  // lot: a link opened again in a different browser has no localStorage to
+  // read, and without this the work is simply gone.
+  function recover(then) {
+    var d = local()
+    if (d) return then(d)
+    var timer = setTimeout(function () { timer = null; then(null) }, 2500)
+    try {
+      fetch('/state', { headers: { Accept: 'application/json' } })
+        .then(function (res) { return res.json() })
+        .then(function (s) {
+          if (!timer) return
+          clearTimeout(timer)
+          timer = null
+          then(s && s.draft ? { answers: s.draft.answers } : null)
+        })['catch'](function () {
+          if (!timer) return
+          clearTimeout(timer)
+          timer = null
+          then(null)
+        })
+    } catch (e) {
+      clearTimeout(timer)
+      timer = null
+      then(null)
+    }
+    return undefined
+  }
+
+  function begin(d) {
+    recovered = d
     if (d) {
       restore(d.answers)
-      store = d.store || {}
+      // Anything in the draft that no control on this page answers for came
+      // from MP.set, and has to go back there — the machine's copy has the
+      // values but not the store they were kept in, and a sortable list that
+      // came back on screen but not into the answer is the worst of both.
+      var named = {}
+      controls().forEach(function (el) { named[el.name] = true })
+      all('[data-mp-value][name]', scope()).forEach(function (el) { named[el.getAttribute('name')] = true })
+      Object.keys(d.answers || {}).forEach(function (k) {
+        if (!named[k]) store[k] = d.answers[k]
+      })
+      if (d.store) Object.keys(d.store).forEach(function (k) { store[k] = d.store[k] })
       responseId = d.responseId || null
     }
     scope().addEventListener('input', save, true)
@@ -338,6 +432,8 @@ export const BRIDGE_JS = `
     // saved values, and the native controls already have theirs back.
     document.dispatchEvent(new CustomEvent('mp:ready'))
   }
+
+  function start() { recover(begin) }
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start)
   else start()

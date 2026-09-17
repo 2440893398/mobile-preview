@@ -65,8 +65,16 @@ export function formatInteractionWait(s, payload) {
   return lines.join('\n')
 }
 
-export function formatInteractionStatus(slots, now = Date.now()) {
-  if (slots.length === 0) return 'no open interaction'
+// An answer whose daemon is gone — the machine rebooted, the process was
+// killed — but which nobody has read yet. `status` keeps the record on
+// purpose; saying nothing about it here would make the only copy of a
+// decision someone already made invisible.
+export function isUnreadAnswer(s) {
+  return Boolean(s?.response && !s.deliveredAt)
+}
+
+export function formatInteractionStatus(slots, now = Date.now(), held = []) {
+  if (slots.length === 0 && held.length === 0) return 'no open interaction'
 
   const blocks = slots.map((s) => {
     const lines = [`${s.id} — ${s.purpose}`]
@@ -86,6 +94,15 @@ export function formatInteractionStatus(slots, now = Date.now()) {
     lines.push(`  log: ${s.logPath || state.interactionLogPath(s.id)}`)
     return lines.join('\n')
   })
+
+  for (const s of held) {
+    blocks.push([
+      `${s.id} — ${s.purpose}`,
+      `  came back as ${s.response?.disposition ?? 'answered'}; nobody has read it — its daemon is gone, the answer is not`,
+      `  read it with: mp interaction wait --id ${s.id}`,
+      `  expires in ${minutesLeft(s.expiresAt, now)} min`,
+    ].join('\n'))
+  }
 
   blocks.push('`mp interaction close [--id X]` ends one early, `--all` ends every one.')
   return blocks.join('\n\n')
@@ -115,10 +132,18 @@ export function createInteractionCommands({
     return id
   }
 
+  // A record whose daemon died still holding an answer nobody read. It is not
+  // active, but it is exactly what a `wait` after a reboot — or after a
+  // compaction lost the id — is looking for.
+  function heldAnswers() {
+    return state.listInteractions()
+      .filter((s) => !interactionHealth(s).active && isUnreadAnswer(s) && Date.now() <= s.expiresAt)
+  }
+
   // Same rule as the preview's port resolution: never guess between several.
   function resolveId(parsed) {
     if (parsed.id !== undefined) return requireId(parsed.id)
-    const live = activeSlots()
+    const live = [...activeSlots(), ...heldAnswers()]
     if (live.length === 0) fail('no open interaction. Run `mp interaction ask` first.')
     if (live.length > 1) {
       fail(`several interactions are open (${live.map((s) => s.id).join(', ')}); pass --id.`)
@@ -355,13 +380,15 @@ export function createInteractionCommands({
       // collected it is gone — a reboot mid-question must not throw away
       // what the user already decided. `wait` still finds it; its TTL, and
       // `close`, still end it.
-      if (s.response && !s.deliveredAt && health.reason === 'stale') continue
+      if (isUnreadAnswer(s) && health.reason === 'stale') continue
       note(`${s.id}: previous question ${health.reason === 'expired' ? 'has expired' : 'is stale'}; cleaning up`)
       cleanupSlot(s)
     }
 
+    const held = heldAnswers()
+
     if (isJson()) {
-      return emitJson(live.map((s) => ({
+      return emitJson([...live, ...held].map((s) => ({
         id: s.id,
         purpose: s.purpose,
         stage: s.stage,
@@ -373,9 +400,10 @@ export function createInteractionCommands({
         expiresAt: s.expiresAt,
         expiresInMinutes: minutesLeft(s.expiresAt),
         daemonPid: s.daemonPid ?? null,
+        daemonGone: !interactionHealth(s).active,
       })))
     }
-    return console.log(formatInteractionStatus(live))
+    return console.log(formatInteractionStatus(live, Date.now(), held))
   }
 
   async function close(args) {

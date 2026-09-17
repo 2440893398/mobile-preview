@@ -26,7 +26,9 @@ const NODE = process.execPath
 const SECRET = 'LTAI5t9f3c1e0b2a-secret'
 const ECHO_USE = `"${NODE}" -e "process.stdout.write('k='+process.env.OSS_KEY+' b='+process.env.BUCKET)"`
 
-function mp(args, { timeoutMs = 20_000 } = {}) {
+// 45 秒不是这些命令要跑这么久，而是整个套件并行跑的时候，一个要 spawn 子
+// 进程的测试会和别人抢 CPU。超时太紧，失败的是机器负载，不是代码。
+function mp(args, { timeoutMs = 45_000 } = {}) {
   return new Promise((resolve) => {
     const child = spawn(NODE, [BIN, ...args], {
       env: { ...process.env, MP_STATE_DIR: dir },

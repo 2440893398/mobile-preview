@@ -26,6 +26,7 @@
 | 至少一个答案载体：`name=` 表单控件、`[data-mp-value]` 或 `MP.set(` | 否则 answers 为空 |
 | 不得自带或覆盖 `window.MP` | 桥接脚本由 CLI 注入 |
 | 建议有 `[data-mp-receipt]` | 没有时桥接脚本追加固定底栏 |
+| 上百词正文却什么都没画（无 `<svg>`／`<figure>`）只警告不拦 | 那是加了边距的聊天消息，页面白开了；但有些问题确实只能用文字问，所以不是硬失败 |
 
 检查失败时页面不上线，CLI 把 problems 原样返回给 Agent 重写。
 
@@ -61,15 +62,18 @@
 | `MP.submit(disposition, extra)` | 程序化提交 |
 | 事件 `mp:ready` | 桥接就绪、草稿已恢复到原生控件后触发；自定义控件在此事件里调 `MP.draft` |
 
-草稿：任何 input/change 或 `MP.set` 后写 localStorage（键 `mp:draft:<requestId>`），并 800 ms 防抖 POST `/draft` 到 CLI。刷新页面自动恢复原生控件；提交成功后清除。
+草稿：任何 input/change 或 `MP.set` 后写 localStorage（键 `mp:draft:<requestId>:<contentDigest>`，按页面而不是按 revision，链接过期后原页重发能接上），并 800 ms 防抖 POST `/draft` 到 CLI。
+
+恢复顺序：先读 localStorage；没有就 `GET /state` 要本机那份（换浏览器打开的人只有这一条路）。从服务端恢复时，页面上没有同名控件的键会被放回 `store`，否则排序这类值只会显示在屏幕上、不会回到 answers 里。两条路都走完才触发 `mp:ready`。提交成功后清除。
 
 ## 5. 传输
 
 - 注入的 `window.MP_REQUEST = { requestId, revision, contentDigest }`。
+- `GET /state`：`{ status, requestId, revision, draft }`，作答后 404。
 - `POST /draft`：`{ requestId, revision, answers }`，仅 waiting 状态接受，204。
 - `POST /submit`：`{ requestId, revision, contentDigest, responseId, disposition, answers, reason? }`。
   - `contentDigest` 不符 → 409 `stale`，页面提示重新打开。
-  - 同一 `responseId` 重复 → 返回同一 receiptId，`duplicate: true`。
+  - 同一 `responseId` 重复 → 返回同一 receiptId，`duplicate: true`；前一份还在处理中 → 409 `busy`，页面按「稍等」处理而不是「失败」。
   - 成功 → `{ receiptId, status: "submitted" }`。
 - CSP：`default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:; connect-src 'self'; form-action 'none'`。
 

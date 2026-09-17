@@ -32,7 +32,9 @@ function pageFile(name, html = PAGE) {
   return f
 }
 
-function mp(args, { timeoutMs = 20_000 } = {}) {
+// 45 秒不是这些命令要跑这么久，而是整个套件并行跑的时候，一个要 spawn 子
+// 进程的测试会和别人抢 CPU。超时太紧，失败的是机器负载，不是代码。
+function mp(args, { timeoutMs = 45_000 } = {}) {
   return new Promise((resolve) => {
     const child = spawn(NODE, [BIN, ...args], {
       env: { ...process.env, MP_STATE_DIR: dir },
@@ -293,4 +295,45 @@ test('链接在裸行上单独一行，手机上才复制得动', () => {
 
 test('status 的散文形态在没有问题时也说得出话', () => {
   assert.equal(formatInteractionStatus([]), 'no open interaction')
+})
+
+// —— 0.5.1 评审修复 ——
+
+test('daemon 没了但答案没人读过：status 看得见，不带 --id 的 wait 也找得到', async () => {
+  // 机器重启、进程被杀——记录特意留着，但之前只有手里攥着 id 的人够得着。
+  const id = mintInteractionId()
+  state.writeInteraction(id, {
+    id,
+    purpose: '重启前答完的那个问题',
+    daemonPid: 999_999_999,
+    createdAt: Date.now() - 60_000,
+    expiresAt: Date.now() + 60 * 60_000,
+    revision: 1,
+    stage: 'submitted',
+    response: {
+      receiptId: 'rc-1',
+      responseId: 'resp-1',
+      disposition: 'answered',
+      answers: { city: 'sz' },
+      reason: null,
+      revision: 1,
+      receivedAt: Date.now() - 30_000,
+    },
+  })
+  try {
+    const listed = JSON.parse((await mp(['interaction', 'status', '--json'])).stdout)
+    const mine = listed.find((s) => s.id === id)
+    assert.ok(mine, 'status 不说，等于这份答案不存在')
+    assert.equal(mine.daemonGone, true)
+    assert.equal(mine.disposition, 'answered')
+
+    const prose = await mp(['interaction', 'status'])
+    assert.ok(prose.stdout.includes(id) && prose.stdout.includes('nobody has read it'), prose.stdout)
+
+    const read = await mp(['interaction', 'wait', '--json'])
+    assert.equal(read.status, 0, read.stderr)
+    assert.deepEqual(JSON.parse(read.stdout).answers, { city: 'sz' })
+  } finally {
+    state.clearInteraction(id)
+  }
 })

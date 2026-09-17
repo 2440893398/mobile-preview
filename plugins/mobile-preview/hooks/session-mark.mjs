@@ -94,11 +94,26 @@ export function pruneMarks(env = process.env) {
 // to tell "the model wrote out a decision instead of opening a page" from
 // "the model opened a page and is describing it", which look alike in the
 // message text and are opposites.
+// A record that has been answered is not a question in front of anyone — and
+// it outlives the answer by its whole TTL, two hours by default. Counting
+// those would mean one finished question silences this hook for the rest of
+// the afternoon, and on Codex this is the only trigger there is.
 export function hasOpenInteraction(env = process.env) {
   const dir = join(stateDir(env), 'interactions')
   if (!existsSync(dir)) return false
   try {
-    return readdirSync(dir).some((name) => /^i-[a-z0-9]+\.json$/.test(name))
+    return readdirSync(dir).filter((name) => /^i-[a-z0-9]+\.json$/.test(name)).some((name) => {
+      try {
+        const s = JSON.parse(readFileSync(join(dir, name), 'utf8'))
+        if (s?.response) return false
+        if (s?.expiresAt && Date.now() > s.expiresAt) return false
+        return s?.stage === 'starting' || s?.stage === 'collecting'
+      } catch {
+        // Unreadable says nothing either way, and silence is this hook's safe
+        // direction.
+        return false
+      }
+    })
   } catch {
     return false
   }

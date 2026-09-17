@@ -24,6 +24,16 @@ export function readPayload(stream = process.stdin, timeoutMs = DEFAULT_MS) {
       stream.removeListener('data', onData)
       stream.removeListener('end', finish)
       stream.removeListener('error', finish)
+      // Letting go of the stream is the other half of the deadline. A stdin
+      // that never ends keeps the event loop alive on its own, so without
+      // this the hook would decide on time and then sit there anyway until
+      // the host killed it — which is the failure this whole file is about.
+      try {
+        stream.pause()
+        stream.unref?.()
+      } catch {
+        // Not every stream can be released; the deadline already fired.
+      }
       try {
         resolve(JSON.parse(text))
       } catch {

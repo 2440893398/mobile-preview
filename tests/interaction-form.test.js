@@ -204,3 +204,44 @@ test('链接过期后什么都不给', async () => {
     assert.equal((await fetch(`${base}/?__mp_token=${token}`)).status, 404)
   })
 })
+
+// —— 0.5.1 评审修复 ——
+
+test('正在处理时的重复提交回 409 busy，不是 404——那一份马上就会成功', async () => {
+  await withServer({}, async ({ base, cookie, post }) => {
+    const c = await cookie()
+    // 第一份的 body 慢慢来（手机信号不好就是这样），第二份在它还没读完时到达，
+    // 稳稳落在 busy 分支上。
+    const text = JSON.stringify(answer())
+    const slow = new ReadableStream({
+      start(ctrl) {
+        ctrl.enqueue(new TextEncoder().encode(text.slice(0, 10)))
+        setTimeout(() => {
+          ctrl.enqueue(new TextEncoder().encode(text.slice(10)))
+          ctrl.close()
+        }, 300)
+      },
+    })
+    const first = fetch(`${base}/submit`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: c },
+      body: slow,
+      duplex: 'half',
+    })
+    await new Promise((r) => setTimeout(r, 80))
+    const second = await post('/submit', answer(), c)
+
+    assert.equal(second.status, 409, '重复提交必须说得出自己是「正在处理」')
+    assert.equal((await second.json()).status, 'busy')
+    assert.equal((await first).status, 200, '慢的那份照样收下')
+  })
+})
+
+test('/state 在作答之后就什么也不给了', async () => {
+  await withServer({}, async ({ base, cookie, post }) => {
+    const c = await cookie()
+    assert.equal((await fetch(`${base}/state`, { headers: { Cookie: c } })).status, 200)
+    await post('/submit', answer(), c)
+    assert.equal((await fetch(`${base}/state`, { headers: { Cookie: c } })).status, 404)
+  })
+})

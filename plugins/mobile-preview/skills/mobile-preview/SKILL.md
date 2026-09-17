@@ -205,12 +205,22 @@ phone submits, then prints the answers as JSON.
 One self-contained HTML file. If you have a design skill, follow it for the
 visual work; everything below is what this CLI requires regardless.
 
-**Explain before you ask.** Lead with why you need them, what each choice
-changes, and what it costs — for someone who knows nothing about the area.
-Prefer a picture to a paragraph: a timeline for "when", a same-axis comparison
-for a trade-off, a before/after for an edit, a relationship diagram for a
-dependency. Draw them in HTML/CSS or inline SVG. Fold the original wording and
-the evidence behind a `<details>` so it is there without being in the way.
+**Explain before you ask, and draw rather than write.** Lead with why you need
+them, what each choice changes, and what it costs — explained like the reader
+knows nothing about the area: big pictures, few words, every term explained
+once in a single plain sentence.
+
+If it can be drawn, do not write it. A timeline for "when", two bars on one
+axis for a trade-off, a before/after for an edit, boxes and arrows for a
+dependency. Draw them in HTML/CSS or inline SVG — mark a CSS-drawn one with
+`<figure>` so the check can see it — and fold the original wording and the
+evidence behind a `<details>` so it is there without being in the way.
+
+`ask` warns when a page runs to hundreds of words with nothing drawn. Take the
+warning seriously: that page is a chat message with margins, it costs a tunnel
+and a tap, and the chat was already free. The layout being good is not the
+point — a wall of text in a nicer font is still a wall of text on a 390 px
+screen.
 
 **Hard constraints** — `ask` refuses the page and tells you which one you hit:
 

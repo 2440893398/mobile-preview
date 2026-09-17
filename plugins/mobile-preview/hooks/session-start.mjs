@@ -130,23 +130,24 @@ So, in this session:
   block, which many phone clients render unselectable.
 - When you need to look at the page yourself, use \`mp capture\`, rather than
   asking the user to open a browser they do not have.
-- When the task needs a credential from the user — a password, an access key,
-  a token, a database URL — never ask them to paste it into the chat. Run
+- When the task needs a credential — a password, an access key, a token, a
+  database URL — never ask them to paste it into the chat. Run
   \`mp secret ask --purpose "<why>" --field NAME --use "<command>"\`, hand over
-  the printed link the same bare way, then \`mp secret wait\` and
-  \`mp secret run -- <command>\`. The CLI never prints a value and there is no
-  command that does; do not go looking for one.
+  the link the same bare way, then \`mp secret wait\` and
+  \`mp secret run -- <command>\`. No command prints a value; do not look for one.
 - When the answer you need is a choice among three or more options, two or more
   values, an ordering, or a review of more than a screen of content, do not
-  write it out in the chat. Put it on a page: write one self-contained HTML
-  file, run \`mp interaction ask --purpose "<why>" --html <file>\`, hand over the
-  printed link the same bare way, then \`mp interaction wait --id <id>\` and act
-  on the JSON it prints. A single yes/no stays in the chat.
+  write it out in the chat. Put it on a page: one self-contained HTML file,
+  \`mp interaction ask --purpose "<why>" --html <file>\`, hand over the link the
+  same bare way, then \`mp interaction wait --id <id>\` and act on the JSON. A
+  single yes/no stays in the chat.
+- That page must do what a chat cannot: **draw** the comparison, the order, the
+  before and after — HTML/CSS boxes or inline SVG, few words. Paragraphs in a
+  nicer font are still a wall of text. Load the skill before your first one.
 - \`mp interaction wait\` printing status "waiting" means they are still
   reading — run it again; "expired_link" means reopen it with \`--id <id>\`.
-- Load the mobile-preview skill for everything else — prerequisites, a blank
-  preview, what an interaction page must contain, lifetimes and safety —
-  instead of improvising around the CLI.
+- Load the mobile-preview skill for anything else: prerequisites, a blank
+  preview, the page contract, lifetimes, safety.
 - If a turn has nothing to do with a local app, a credential or a decision
   only they can make, none of this applies.
 

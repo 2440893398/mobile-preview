@@ -193,6 +193,16 @@ calls `MP.set(name, value)` for something like a sortable list; a second submit
 button carrying `data-mp-disposition="needs_clarification"` lets the user say
 the question itself is wrong, which is why this is more than a form.
 
+The draft is restored from the phone when it can be, and from this machine when
+it cannot: a link opened first in a chat app's built-in browser and then again
+in Safari is two localStorages and one person, who typed their answer once.
+
+One thing `ask` only warns about, because it cannot be certain: a page that
+runs to hundreds of words with nothing drawn — no `<svg>`, no `<figure>`. That
+page is a chat message with margins, and it cost a tunnel and a tap to open.
+The point of a page is the thing a chat cannot do: show the comparison, the
+order, the before and after. Nice typography is not that thing.
+
 `wait` blocks for `--timeout` seconds — 540 by default, sized for a tool call
 that may not block for more than ten minutes — and **exits 0 in every normal
 case**. Read `status`, not the exit code: `submitted` carries the answers,
@@ -203,9 +213,12 @@ than any single call may wait, and exiting non-zero there would end the turn
 instead of letting the model wait again. Reading the same answer twice returns
 the same thing, so a compaction that lost it is recoverable.
 
-`ask --id <id>` replaces an open question's page and bumps its revision, so a
-tab still showing the previous one is refused with a 409 rather than answering
-the new question with the old one's options. The answer lives in the state file
+`ask --id <id>` replaces an open question's page and bumps its revision. The
+old page cannot answer the new question: in practice its tunnel is already
+gone, and if one ever did arrive it is refused with a 409 rather than filed as
+an answer to a question it never showed. If the page is unchanged — a link that
+lapsed while they were thinking, sent out again — whatever they had typed is
+still there, on the phone and on this machine. The answer lives in the state file
 rather than in memory — it has to outlive the process that collected it — until
 its `--ttl` or `mp interaction close`.
 

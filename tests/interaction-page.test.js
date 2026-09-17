@@ -1,7 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
-  BRIDGE_JS, DISPOSITIONS, MAX_PAGE_BYTES, buildPage, checkPage, contentDigest, jsonForScript,
+  BRIDGE_JS, DISPOSITIONS, MAX_PAGE_BYTES, buildPage, checkPage, contentDigest, jsonForScript, prose,
 } from '../src/interaction-page.js'
 
 // 页面约定：docs/superpowers/specs/2026-09-16-interaction-page-contract.md
@@ -130,4 +130,47 @@ test('contentDigest 随内容变化，是 revision 之间的凭据', () => {
 test('disposition 的取值里必须有「前提不对」这一类，不能只能回答', () => {
   assert.ok(DISPOSITIONS.includes('answered'))
   assert.ok(DISPOSITIONS.includes('needs_clarification'))
+})
+
+// —— 0.5.1 评审修复 ——
+
+test('不带引号的外链同样拒绝——手写的页面就长这样', () => {
+  const v = checkPage(`<!doctype html><html lang="zh"><head><meta name="viewport" content="width=device-width">`
+    + `<script src=https://cdn.example.com/x.js></script></head>`
+    + `<body><input name="a"><button data-mp-submit>ok</button></body></html>`)
+  assert.equal(v.ok, false)
+  assert.match(v.problems.join(' '), /external resources/)
+})
+
+test('协议相对的 url() 和 @import 也算外链——它跟着页面的协议照样去取', () => {
+  const css = (inner) => checkPage(`<!doctype html><html lang="zh"><head><meta name="viewport" content="width=device-width">`
+    + `<style>${inner}</style></head><body><input name="a"><button data-mp-submit>ok</button></body></html>`)
+  assert.equal(css('@font-face{font-family:x;src:url(//fonts.example.com/x.woff2)}').ok, false)
+  assert.equal(css('@import "//example.com/a.css";').ok, false)
+  // 内联的 data: 图不受影响。
+  assert.equal(css('.a{background:url(data:image/gif;base64,R0lGOD)}').ok, true)
+})
+
+test('一整页都是字、什么也没画的页面会被点出来——那是加了边距的聊天消息', () => {
+  const wall = `<!doctype html><html lang="zh"><head><meta name="viewport" content="width=device-width"></head>`
+    + `<body><p>${'这段话很长很长而且只有字'.repeat(40)}</p>`
+    + `<input name="a"><button data-mp-submit>ok</button></body></html>`
+  const v = checkPage(wall)
+  assert.equal(v.ok, true, '这只是提醒，不是拒绝：有些问题真的只能用文字问')
+  assert.match(v.warnings.join(' '), /nothing drawn/)
+
+  // 画了东西就不再提醒：内联 SVG 算，用 HTML/CSS 画的用 <figure> 标出来也算。
+  assert.equal(checkPage(wall.replace('<p>', '<svg viewBox="0 0 1 1"></svg><p>')).warnings.join(' ').includes('nothing drawn'), false)
+  assert.equal(checkPage(wall.replace('<p>', '<figure><div class="bar"></div></figure><p>')).warnings.join(' ').includes('nothing drawn'), false)
+})
+
+test('prose 把中文按字算、英文按词算——不然中文页面永远触不到门槛', () => {
+  assert.equal(prose('<p>一二三四五</p>').words, 5)
+  assert.equal(prose('<p>one two three four five</p>').words, 5)
+  // script/style/svg 里的内容不算正文。
+  assert.equal(prose('<style>.a{color:red}</style><script>var a = 1</script><p>一二</p>').words, 2)
+})
+
+test('桥接脚本本身语法正确——它一崩，整个页面就没有提交入口了', () => {
+  assert.doesNotThrow(() => new Function(BRIDGE_JS))
 })

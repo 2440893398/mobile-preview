@@ -47,8 +47,16 @@ external resources at all** (no CDN, no web font, so no React or Babel), no
 `<form action>`, no `<script type="module">`. Give controls a `name`, or call
 `MP.set(name, value)` for a custom one; put `data-mp-submit` on the button, and
 on a second one add `data-mp-disposition="needs_clarification"` so the user can
-say the question itself is wrong. Explain before you ask, and prefer a diagram
-drawn in HTML/CSS or inline SVG to a paragraph.
+say the question itself is wrong.
+
+**Draw it, do not write it.** Explain like the reader knows nothing about the
+area, with big pictures and few words: if it can be drawn, do not write it —
+a timeline for "when", two bars on one axis for a trade-off, a before/after for
+an edit, boxes and arrows for a dependency. Draw them in HTML/CSS or inline
+SVG, mark a CSS-drawn one with `<figure>`, and explain each term once in a
+single plain sentence. `ask` warns when a page is hundreds of words with
+nothing drawn, because that page is a chat message with margins — and the chat
+was already free.
 
 `wait` exits 0 in every normal case — read `status`, not the exit code.
 `waiting` means they are still reading, so run it again; its `draft` says how

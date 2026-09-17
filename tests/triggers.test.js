@@ -57,7 +57,10 @@ test('注入的文字说清了什么时候开页面、什么时候留在聊天�
 // 这段文字每个远程会话开局都要读一遍，压缩后还要再读一遍。它是有成本的。
 test('注入的文字没有失控地变长', () => {
   const words = REMOTE_CONTEXT.split(/\s+/).length
-  assert.ok(words < 400, `注入已经涨到 ${words} 个词；超过 400 就该把细节挪进 skill`)
+  // 400 → 420：「页面要画出来，不是把话搬过去」这条必须在注入里。它决定页面
+  // 值不值得开，而只读注入的模型——注入已经够它跑完命令——永远不会去加载
+  // skill，细节挪进去就等于没有。
+  assert.ok(words < 420, `注入已经涨到 ${words} 个词；超过 420 就该把细节挪进 skill`)
 })
 
 test('SessionStart 在远程会话里记下会话，本地会话也记——「不是远程」同样是答案', () => {
@@ -131,8 +134,31 @@ test('hasOpenInteraction 只认 i-xxxx.json，别的文件不算', () => {
   writeFileSync(join(dir, 'i-abc123.cloudflared.log'), '', 'utf8')
   assert.equal(hasOpenInteraction(env), false, '只剩日志不等于还有问题开着')
 
-  writeFileSync(join(dir, 'i-abc123.json'), '{}', 'utf8')
+  writeFileSync(join(dir, 'i-abc123.json'), JSON.stringify({ stage: 'collecting' }), 'utf8')
   assert.equal(hasOpenInteraction(env), true)
+})
+
+test('答完的记录不算「问题还开着」——它比答案多活两个小时，不能把兜底静音那么久', () => {
+  const env = tempEnv()
+  const dir = join(env.MP_STATE_DIR, 'interactions')
+  mkdirSync(dir, { recursive: true })
+
+  const write = (body) => writeFileSync(join(dir, 'i-abc123.json'), JSON.stringify(body), 'utf8')
+
+  write({ stage: 'collecting', expiresAt: Date.now() + 60_000 })
+  assert.equal(hasOpenInteraction(env), true)
+
+  write({ stage: 'submitted', response: { disposition: 'answered' }, expiresAt: Date.now() + 60_000 })
+  assert.equal(hasOpenInteraction(env), false, '答过了就不是「正在问」')
+
+  write({ stage: 'expired_link', expiresAt: Date.now() + 60_000 })
+  assert.equal(hasOpenInteraction(env), false, '链接都过期了，用户面前没有页面')
+
+  write({ stage: 'collecting', expiresAt: Date.now() - 1 })
+  assert.equal(hasOpenInteraction(env), false, '记录过期了也一样')
+
+  writeFileSync(join(dir, 'i-abc123.json'), '{ 半截', 'utf8')
+  assert.equal(hasOpenInteraction(env), false, '读不出来就当没有——这个钩子的安全方向是闭嘴')
 })
 
 // ---- 第二层：问题工具的 PreToolUse ----
@@ -405,4 +431,14 @@ test('hooks.json 把两个新触发挂在对的事件上，指向真实存在的
   for (const file of ['ask-question.mjs', 'stop.mjs', 'session-mark.mjs', 'hook-io.mjs']) {
     assert.ok(existsSync(join(HOOKS, file)), `hooks.json 指向的 ${file} 必须存在`)
   }
+})
+
+test('注入的文字里要有「页面得画出来」这条——它决定页面值不值得开', () => {
+  assert.match(REMOTE_CONTEXT, /draw/i)
+  assert.match(REMOTE_CONTEXT, /SVG/i, '得说清用什么画，否则模型会去找图片素材')
+  assert.match(
+    REMOTE_CONTEXT,
+    /wall of text/i,
+    '只读注入的模型不会去加载 skill；这条要是只写在 skill 里，等于没写',
+  )
 })

@@ -117,3 +117,25 @@ test('作为 hook 进程运行：拒绝时输出 PreToolUse deny，放行时什�
   assert.equal(garbage.status, 0, '坏输入也不能让工具调用失败')
   assert.equal(garbage.stdout, '')
 })
+
+test('stdin 一直不关也会自己了结，而不是挂到 hook 超时被杀', async () => {
+  // 宿主要是把继承来的终端交给它，这个读就永远等不到 end。那种失效是看不见的：
+  // 没有报错、没有输出，这道在 bypassPermissions 下唯一还生效的闸直接消失。
+  const { spawn } = await import('node:child_process')
+  const child = spawn(process.execPath, [HOOK], { stdio: ['pipe', 'pipe', 'pipe'] })
+  child.stdin.write(JSON.stringify(bash('mp secret run -- sh -c "env"')))
+  // 故意不 end()。
+
+  const code = await new Promise((resolve, reject) => {
+    const timer = setTimeout(() => { child.kill(); reject(new Error('hook 没有在 5 秒内退出')) }, 5_000)
+    let out = ''
+    child.stdout.setEncoding('utf8').on('data', (d) => { out += d })
+    child.on('close', (status) => {
+      clearTimeout(timer)
+      assert.match(out, /inline code/, '超时读到的那半截也该照常判')
+      resolve(status)
+    })
+    child.on('error', reject)
+  })
+  assert.equal(code, 0)
+})

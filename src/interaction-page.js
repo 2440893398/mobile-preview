@@ -281,7 +281,11 @@ export const BRIDGE_JS = `
       bar.setAttribute('role', 'status')
       document.body.appendChild(bar)
     }
-    bar.style.cssText = 'position:fixed;left:0;right:0;bottom:0;padding:14px 16px;z-index:2147483647;'
+    // Full-bleed bar, but its text lines up with the content column: on a
+    // wide window a receipt pinned to the far bottom-left is nowhere near
+    // where the person was just reading.
+    bar.style.cssText = 'position:fixed;left:0;right:0;bottom:0;box-sizing:border-box;z-index:2147483647;'
+      + 'padding:14px max(16px, calc((100% - var(--mp-content-width, 46rem)) / 2));'
       + 'font:15px/1.5 -apple-system,"SF Pro Text","PingFang SC","Noto Sans SC",sans-serif;color:#fff;'
       + 'background:' + (ok ? '#166534' : '#9f1239')
     bar.textContent = text
@@ -440,9 +444,53 @@ export const BRIDGE_JS = `
 })()
 `
 
+// Injected, never authored — the counterpart to BRIDGE_JS, for layout.
+//
+// A page is written against the phone it was asked for: 390 px wide, one
+// column, nothing capped. The same link then gets opened on a laptop, where a
+// body with no width is a line of text as wide as the monitor — the one
+// reading posture this command exists to improve. No page should have to
+// remember the cap, so none is asked to.
+//
+// All of it is a default, not a rule. It sits first in `<head>`, so anything
+// the page says later about images wins on order; the cap is written as
+// `html body` (specificity 0,1,1) so it survives the `body{margin:0}` every
+// page starts with, and is retuned by setting `--mp-content-width` or dropped
+// entirely with `<body data-mp-layout="full">` for a deliberately full-bleed
+// design. No media query: below the cap, `max-width` and `auto` side margins
+// are both no-ops, so the phone renders exactly what it rendered before.
+export const BASE_CSS = `
+:root{--mp-content-width:46rem}
+img,video,canvas{max-width:100%;height:auto}
+html body:not([data-mp-layout="full"]){max-width:var(--mp-content-width);margin-left:auto;margin-right:auto}
+`
+
+// First inside <head>, so the page's own stylesheet comes after this one.
+// Falling back down the tree rather than to the front of the file: a <style>
+// ahead of <!doctype html> drops the page into quirks mode, which is a worse
+// layout bug than the one being fixed.
+function withBaseCss(html) {
+  const s = String(html)
+  const style = `<style data-mp-base>${BASE_CSS}</style>\n`
+
+  // `[\s>]` and not a bare prefix: `<head` also matches the `<header>` of a
+  // page that left `<head>` implicit, and the style would land inside it.
+  for (const tag of [/<head[\s>]/i, /<html[\s>]/i]) {
+    const m = tag.exec(s)
+    if (!m) continue
+    const close = s.indexOf('>', m.index)
+    if (close < 0) continue
+    return `${s.slice(0, close + 1)}\n${style}${s.slice(close + 1)}`
+  }
+  const body = /<body[\s>]/i.exec(s)
+  if (body) return `${s.slice(0, body.index)}${style}${s.slice(body.index)}`
+  return style + s
+}
+
 export function buildPage(html, request) {
+  const page = withBaseCss(html)
   const tail = `\n<script>window.MP_REQUEST=${jsonForScript(request)}</script>\n<script>${BRIDGE_JS}</script>\n`
-  const i = String(html).toLowerCase().lastIndexOf('</body>')
-  if (i < 0) return html + tail
-  return html.slice(0, i) + tail + html.slice(i)
+  const i = page.toLowerCase().lastIndexOf('</body>')
+  if (i < 0) return page + tail
+  return page.slice(0, i) + tail + page.slice(i)
 }

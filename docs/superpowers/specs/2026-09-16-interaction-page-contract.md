@@ -66,6 +66,20 @@
 
 恢复顺序：先读 localStorage；没有就 `GET /state` 要本机那份（换浏览器打开的人只有这一条路）。从服务端恢复时，页面上没有同名控件的键会被放回 `store`，否则排序这类值只会显示在屏幕上、不会回到 answers 里。两条路都走完才触发 `mp:ready`。提交成功后清除。
 
+### 4.1 注入的基础样式
+
+桥接脚本之外，CLI 还在 `<head>` 最前面注入一段样式。页面不必写，也不该重写：
+
+| 声明 | 作用 |
+|---|---|
+| `:root{--mp-content-width:46rem}` | 内容列宽，页面改这个变量即可加宽或收窄 |
+| `img,video,canvas{max-width:100%;height:auto}` | 图不撑破窄屏 |
+| `html body:not([data-mp-layout="full"]){max-width:var(--mp-content-width);margin-left:auto;margin-right:auto}` | 同一条链接在 PC 上打开时不铺满整屏 |
+
+页面是照着 390 px 手机写的，但同一条链接经常被在电脑上再点开一次——那时没有列宽的 body 就是一行和显示器一样长的字。三件事保证它不和页面打架：注入在页面自己的样式之前，图片这类规则按顺序输给页面；列宽选择器写成 `html body`（0,1,1），才压得过每个页面开头那句 `body{margin:0}`；不加媒体查询，因为窄屏下 `max-width` 和 `auto` 边距本来就不生效，手机端渲染一个像素都不变。body 的背景会照 CSS 规则继续铺满画布，所以居中不会露出两条白边。要整幅出血的页面用 `<body data-mp-layout="full">` 退出。
+
+没有 `[data-mp-receipt]` 时追加的底部回执条仍然通栏，但左右内边距按同一个变量算，文字与正文列对齐，而不是黏在 1440 px 屏幕的左下角。
+
 ## 5. 传输
 
 - 注入的 `window.MP_REQUEST = { requestId, revision, contentDigest }`。

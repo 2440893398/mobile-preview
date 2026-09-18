@@ -174,3 +174,32 @@ test('prose 把中文按字算、英文按词算——不然中文页面永远�
 test('桥接脚本本身语法正确——它一崩，整个页面就没有提交入口了', () => {
   assert.doesNotThrow(() => new Function(BRIDGE_JS))
 })
+
+test('每个页面都被注入一条内容列宽：手机上原样，PC 上不会铺成满屏一行字', () => {
+  const out = buildPage(GOOD, { requestId: 'i-abc123', revision: 1 })
+
+  assert.ok(out.startsWith('<!doctype html>'), '样式挤到 doctype 前面会让整页进怪异模式')
+  assert.ok(out.indexOf('<style data-mp-base>') < out.indexOf('<style>body{font-size:16px}</style>'),
+    '默认样式必须排在页面自己的样式之前，页面才覆盖得掉')
+  assert.match(out, /--mp-content-width:46rem/)
+  // 比裸 body 高一级，才压得住每个页面开头那句 body{margin:0}。
+  assert.match(out, /html body:not\(\[data-mp-layout="full"\]\)\{max-width:var\(--mp-content-width\)/)
+  assert.ok(out.includes('<button type="button" data-mp-submit>确认</button>'), '页面正文仍旧一字不动')
+})
+
+test('没有 <head> 的页面也拿得到列宽，样式落在 <html> 之后而不是文件开头', () => {
+  const out = buildPage('<!doctype html><html><body><button data-mp-submit></button>', { requestId: 'i-1' })
+  assert.ok(out.startsWith('<!doctype html><html>'))
+  assert.match(out, /<html>\s*<style data-mp-base>/)
+  assert.ok(out.includes('window.MP_REQUEST'), '桥接照旧挂上')
+})
+
+test('页面把 <head> 省了、正文又有 <header> 时，样式不会被塞进 <header> 里', () => {
+  const out = buildPage(
+    '<!doctype html><html lang="zh"><body><header>标题</header><input name="a">'
+    + '<button data-mp-submit>ok</button></body></html>',
+    { requestId: 'i-1' },
+  )
+  assert.ok(out.indexOf('<style data-mp-base>') < out.indexOf('<body>'), '必须落在 <body> 之前')
+  assert.ok(!/<header>\s*<style data-mp-base>/.test(out))
+})

@@ -197,6 +197,17 @@ The draft is restored from the phone when it can be, and from this machine when
 it cannot: a link opened first in a chat app's built-in browser and then again
 in Safari is two localStorages and one person, who typed their answer once.
 
+The width is injected too, for the same reason: the page is written for the
+390 px phone it was asked for, and the same link gets opened on a laptop, where
+a body nobody capped is a line of text as wide as the monitor. A stylesheet
+ahead of the page's own caps `<body>` at `--mp-content-width` — 46 rem — and
+centres it. It is a default and not a rule: the selector is `html body`, which
+is exactly enough to outrank the `body{margin:0}` every page starts with and
+not enough to outrank a page that means it; the measure is a variable; and
+`<body data-mp-layout="full">` opts out. There is no media query, because below
+the cap `max-width` and `auto` side margins are both no-ops — the phone renders
+what it always rendered, to the pixel.
+
 One thing `ask` only warns about, because it cannot be certain: a page that
 runs to hundreds of words with nothing drawn — no `<svg>`, no `<figure>`. That
 page is a chat message with margins, and it cost a tunnel and a tap to open.

@@ -49,6 +49,14 @@ external resources at all** (no CDN, no web font, so no React or Babel), no
 on a second one add `data-mp-disposition="needs_clarification"` so the user can
 say the question itself is wrong.
 
+Write it for a 390 px phone; the desktop is already handled. The injected base
+stylesheet caps `<body>` at `--mp-content-width` (46 rem) and centres it, so
+the same link opened on a monitor is a readable column rather than a line of
+text as wide as the screen. Retune it with `:root{--mp-content-width:56rem}`,
+opt out with `<body data-mp-layout="full">`, and size what is inside fluidly —
+`clamp()`, percentages, `repeat(auto-fit,minmax(16rem,1fr))` — instead of fixed
+pixel widths.
+
 **Draw it, do not write it.** Explain like the reader knows nothing about the
 area, with big pictures and few words: if it can be drawn, do not write it —
 a timeline for "when", two bars on one axis for a trade-off, a before/after for

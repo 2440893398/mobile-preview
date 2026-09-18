@@ -222,6 +222,18 @@ and a tap, and the chat was already free. The layout being good is not the
 point — a wall of text in a nicer font is still a wall of text on a 390 px
 screen.
 
+**Written for a phone, opened just as often on a laptop.** Design for 390 px
+and leave the desktop to the injected base stylesheet: it caps `<body>` at
+`--mp-content-width` (46 rem) and centres it, so the same link on a monitor is
+a readable column instead of a line of text as wide as the screen. There is
+nothing to add and nothing to fight — a page that wants a different measure
+sets `:root{--mp-content-width:56rem}`, and a deliberately full-bleed one opts
+out with `<body data-mp-layout="full">`. Size everything inside it the same
+way: percentages, `clamp()`, and
+`grid-template-columns:repeat(auto-fit,minmax(16rem,1fr))` for a row of option
+cards, rather than fixed pixel widths that only look right at one of the two
+sizes.
+
 **Hard constraints** — `ask` refuses the page and tells you which one you hit:
 
 - One file, ≤ 300 KB, starting `<!doctype html>`, with `<html lang>` and a

@@ -42,6 +42,12 @@ self-contained HTML page, run `mp interaction ask --purpose "<why>" --html <file
 return the printed link as a bare line, then `mp interaction wait --id <id>` and
 act on the JSON. A single yes/no stays in the chat.
 
+If you cannot make the page — no shell, no way to write a file, `mp` missing —
+say so in one line and stop looking for a way round it. Then answer in the chat
+the way the page would have: three or four lines, one per option, with what it
+costs and what you would pick, and offer the detail on request. Tables and
+paragraphs are the wall the page was meant to avoid, page or no page.
+
 The page is checked before the link is issued: one file under 300 KB, **no
 external resources at all** (no CDN, no web font, so no React or Babel), no
 `<form action>`, no `<script type="module">`. Give controls a `name`, or call

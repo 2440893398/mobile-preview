@@ -2,3 +2,4 @@ node_modules/
 .mp-tmp/
 gallery/
 *.log
+plugins/mobile-preview/evals/results/

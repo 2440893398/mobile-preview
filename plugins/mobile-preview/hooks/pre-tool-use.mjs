@@ -18,14 +18,31 @@ const SECRET_RUN = /\bmp(?:\.cmd)?\s+secret\s+run\b/i
 
 // A shell or interpreter given inline code: whatever was approved on the
 // phone as an argv, the code inside it is opaque to that approval.
-const INLINE_INTERPRETER = [
-  /^(?:sh|bash|zsh|dash|ksh|fish)(?:\.exe)?$/i,
-  /^(?:cmd|cmd\.exe)$/i,
-  /^(?:powershell|powershell\.exe|pwsh|pwsh\.exe)$/i,
-  /^(?:node|node\.exe|deno|bun)$/i,
-  /^(?:python|python3|python\.exe|py|ruby|perl|php)$/i,
+//
+// The flag is matched by shape, per family, because none of them spell it one
+// way: short flags cluster (`bash -lc`, `node -pe`, `python -Ic`, `perl -ne`),
+// long ones take `=` (`node --eval=...`), and PowerShell accepts any prefix of
+// a parameter name (`-Co` is `-Command`). Spelling out the common forms is how
+// the first version of this list missed all of those.
+const powershellCode = (flag) => {
+  const p = flag.slice(1).toLowerCase()
+  return /^[-/]/.test(flag) && p !== '' && (
+    'command'.startsWith(p) || 'encodedcommand'.startsWith(p)
+    || 'commandwithargs'.startsWith(p) || p === 'ec' || p === 'cwa')
+}
+const INLINE = [
+  { name: /^(?:sh|bash|zsh|dash|ksh|fish)$/i, code: (f) => /^-[A-Za-z]*c[A-Za-z]*$/.test(f) },
+  { name: /^cmd$/i, code: (f) => /^\/[ck]$/i.test(f) },
+  { name: /^(?:powershell|pwsh)$/i, code: powershellCode },
+  { name: /^(?:node|deno|bun)$/i, code: (f) => /^-[a-z]*[ep][a-z]*$/.test(f) || /^--(?:eval|print)(?:=|$)/.test(f) || f === 'eval' },
+  { name: /^(?:python[0-9.]*|py)$/i, code: (f) => /^-[bBdEhiIOPqsSuvVx]*c/.test(f) },
+  { name: /^(?:ruby|perl)$/i, code: (f) => /^-[A-Za-z]*[eE]/.test(f) },
+  { name: /^php$/i, code: (f) => /^-r/.test(f) },
 ]
-const INLINE_FLAG = /^(?:-c|\/c|\/k|-e|-p|--eval|--print|-command|-c(?:ommand)?|-enc|-encodedcommand|-ec|-r)$/i
+
+// `C:\Windows\System32\cmd.exe` and `/usr/bin/env` are the programs `cmd`
+// and `env`; the rules below compare names, not paths.
+const programName = (word) => word.replace(/^.*[\\/]/, '').replace(/\.exe$/i, '')
 
 // Programs whose whole job is to re-encode what they are given. Redaction
 // matches the value and its usual encodings in the daemon's output; piping
@@ -148,15 +165,19 @@ export function decide({ tool_name: tool, tool_input: input } = {}) {
   if (!argv.length) return null
 
   const [head, ...rest] = argv
-  const base = head.replace(/^.*[\\/]/, '')
-  if (INLINE_INTERPRETER.some((re) => re.test(base)) && rest.some((a) => INLINE_FLAG.test(a))) {
+  const base = programName(head)
+  const family = INLINE.find((f) => f.name.test(base))
+  if (family && rest.some(family.code)) {
     return {
       deny: `mp secret run: \`${base}\` with inline code is refused — the code inside it is not what the user approved on the phone. `
         + 'Run the script file or the tool directly instead, e.g. `-- node deploy.js`.',
     }
   }
 
-  const dump = argv.find((a) => ENV_DUMP.some((re) => re.test(a)))
+  // The program itself is checked by name, so a path or `.exe` does not hide
+  // `printenv`; the arguments are checked as written, so an argument that
+  // merely ends in `/ls` is not mistaken for a listing.
+  const dump = [base, ...argv].find((a) => ENV_DUMP.some((re) => re.test(a)))
   if (dump) {
     return {
       deny: `mp secret run: \`${dump}\` looks like it prints or expands the environment, which is where the values live. `

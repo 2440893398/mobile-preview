@@ -200,6 +200,13 @@ mp.cmd interaction wait --id i-7f3a1c
 over as a **bare line of its own**, like a preview link. `wait` blocks until the
 phone submits, then prints the answers as JSON.
 
+If you cannot make the page — no shell, no way to write a file, `mp` missing —
+say so in one line and stop looking for a way round it. Then answer in the chat
+the way the page would have: three or four lines, one per option, with what it
+costs and what you would pick, and offer the detail on request. The full
+comparison as tables and paragraphs is exactly the wall the page was meant to
+avoid; not having the page does not make it any easier to read on a phone.
+
 ### Writing the page
 
 One self-contained HTML file. If you have a design skill, follow it for the

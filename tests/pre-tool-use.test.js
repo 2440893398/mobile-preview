@@ -55,6 +55,57 @@ test('argv 里出现环境导出形态被拒', () => {
   }
 })
 
+// 本机实测撞上的漏拦（2026-09-19）：旧规则只认参数的几种标准拼法，而这些
+// 程序自己接受的写法多得多——短参数可以连写，长参数可以带 =，PowerShell 的
+// 参数名可以只写前缀，程序名可以带路径和 .exe。
+test('内联代码参数的变体写法同样被拒', () => {
+  for (const cmd of [
+    'mp secret run -- node --eval=console.log(1)',
+    'mp secret run -- node --print=process.env',
+    'mp secret run -- node -pe 1',
+    'mp secret run -- bash -lc "echo hi"',
+    'mp secret run -- /bin/sh -ec "echo hi"',
+    'mp.cmd secret run -- powershell -Co "gci"',
+    'mp.cmd secret run -- pwsh -enc ZQBjAGgAbwA=',
+    'mp.cmd secret run -- powershell.exe /Command "gci"',
+    'mp secret run -- python3.12 -Ic "print(1)"',
+    'mp secret run -- perl -lne "print"',
+    'mp secret run -- deno eval "console.log(1)"',
+  ]) {
+    const v = decide(bash(cmd))
+    assert.ok(v?.deny, `应当拒绝：${cmd}`)
+    assert.match(v.deny, /inline code/)
+  }
+})
+
+test('带路径或 .exe 的环境导出程序同样被拒', () => {
+  for (const cmd of [
+    'mp secret run -- /usr/bin/env',
+    'mp secret run -- printenv.exe',
+    'mp.cmd secret run -- C:\\Git\\usr\\bin\\printenv.exe',
+  ]) {
+    const v = decide(bash(cmd))
+    assert.ok(v?.deny, `应当拒绝：${cmd}`)
+    assert.match(v.deny, /environment/)
+  }
+})
+
+test('收紧之后，常见的正常命令仍然放行', () => {
+  for (const cmd of [
+    'mp secret run -- bash deploy.sh',
+    'mp secret run -- bash -e deploy.sh',
+    'mp secret run -- node --env-file=.env.example app.js',
+    'mp secret run -- node -r dotenv/config app.js',
+    'mp secret run -- python -u manage.py migrate',
+    'mp secret run -- python -m pytest',
+    'mp.cmd secret run -- powershell -File deploy.ps1',
+    'mp.cmd secret run -- powershell -ExecutionPolicy Bypass -File deploy.ps1',
+    'mp secret run -- ossutil cp ./dist oss://bucket/ls -r',
+  ]) {
+    assert.equal(decide(bash(cmd)), null, `应当放行：${cmd}`)
+  }
+})
+
 test('argvAfterSeparator 只看 -- 之后，并尊重引号', () => {
   assert.deepEqual(argvAfterSeparator('mp secret run --id s-1 -- node "a b.js"'), ['node', 'a b.js'])
   assert.deepEqual(argvAfterSeparator('mp secret run --id s-1'), [])

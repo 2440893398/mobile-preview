@@ -78,6 +78,13 @@ far they got. `expired_link` means reopen with `--id <id>`. Re-asking with
 `--id` bumps the revision so a stale tab cannot answer the new question. The
 full page contract is in the plugin's skill.
 
+If the phone cannot submit — the tunnel dropped, the link lapsed — the page
+retries on its own and then hands the user a block starting
+`【mp interaction 回传 · i-xxxxxx` with an `mp-answer: {...}` line in it. Pasted
+into the chat, **that block is the answer**: act on it, run
+`mp interaction close --id <id>`, and do not send a fresh link asking them to
+fill the same page in a second time.
+
 ## Workflow
 
 1. Start the target app locally, detached — see the rule below.

@@ -99,3 +99,125 @@ test('桥接脚本在真浏览器里走通一遍：草稿、换浏览器恢复�
     server.close()
   }
 })
+
+// 下面两条测的是「送不出去」那条路。用路由拦截来造，而不是真去掐 cloudflared：
+// 手机上遇到的就是这两种回应——隧道在重连时回来的一页不是 JSON 的错误，和这台
+// 机器明确说「不收」。第一种必须自己重试，第二种重试也没用，都不能让填了半天
+// 的人只剩「重新要一条链接再填一遍」这一个选择。
+
+async function onPhone(t, run) {
+  const executablePath = findBrowserExecutable()
+  if (!executablePath) {
+    t.skip('本机没有可用的 chromium')
+    return
+  }
+
+  const { chromium } = await import('playwright')
+  const token = mintToken()
+  let submitted = null
+
+  const server = createInteractionServer({
+    html: HTML,
+    requestId: 'i-bridge2',
+    revision: 3,
+    contentDigest: contentDigest(HTML),
+    sessionHash: hashToken(token),
+    expiresAt: Date.now() + 300_000,
+    draft: () => null,
+    onDraft: () => {},
+    onSubmit: (s) => { submitted = s; return { receiptId: 'rc-retry', duplicate: false } },
+  })
+  await new Promise((r) => server.listen(0, '127.0.0.1', r))
+  const base = `http://127.0.0.1:${server.address().port}`
+
+  const browser = await chromium.launch({ executablePath })
+  const errors = []
+  try {
+    const context = await browser.newContext({ viewport: { width: 390, height: 844 } })
+    const page = await context.newPage()
+    page.on('pageerror', (e) => errors.push(String(e)))
+    // 这两条测试是故意把请求打失败的，浏览器为此记的那行网络日志不算页面出错。
+    page.on('console', (m) => {
+      if (m.type() !== 'error') return
+      if (m.text().indexOf('Failed to load resource') === 0) return
+      errors.push(m.text())
+    })
+    await run({
+      page, base, token, errors, submitted: () => submitted,
+    })
+  } finally {
+    await browser.close()
+    server.close()
+  }
+}
+
+async function until(page, selector, re, ms = 10_000) {
+  const deadline = Date.now() + ms
+  for (;;) {
+    const text = (await page.textContent(selector).catch(() => '')) || ''
+    if (re.test(text)) return text
+    if (Date.now() > deadline) return text
+    await page.waitForTimeout(150)
+  }
+}
+
+test('隧道断二十秒不该让答案丢掉：页面自己重试，人不用再点一次', async (t) => {
+  await onPhone(t, async ({
+    page, base, token, errors, submitted,
+  }) => {
+    let tries = 0
+    await page.route('**/submit', async (route) => {
+      tries += 1
+      // cloudflared 在重连时回的就是这种东西：不是 200，也不是 JSON。
+      // 这条路上什么都没被拒绝——它根本没到这台机器。
+      if (tries === 1) {
+        return route.fulfill({ status: 502, contentType: 'text/html', body: '<html><body>Error 1033</body></html>' })
+      }
+      return route.continue()
+    })
+
+    await page.goto(`${base}/?__mp_token=${token}`)
+    await page.fill('input[name=city]', '深圳')
+    await page.click('[data-mp-submit]')
+
+    assert.match(await until(page, '[data-mp-receipt]', /已提交/), /已提交/, '重试要把答案送到，而不是让用户重来')
+    assert.ok(tries >= 2, '第一次没送到，就该自己再送一次')
+    assert.equal(submitted().disposition, 'answered')
+    assert.equal(await page.isVisible('#mp-handoff'), false, '送到了就不该再弹回传面板')
+    assert.deepEqual(errors, [], '严格 CSP 下不该有控制台错误')
+  })
+})
+
+test('一直送不出去时，答案变成一段可以粘回对话里的话', async (t) => {
+  await onPhone(t, async ({
+    page, base, token, errors,
+  }) => {
+    await page.route('**/submit', (route) => route.fulfill({
+      status: 400,
+      contentType: 'application/json',
+      body: JSON.stringify({ status: 'rejected', error: '提交格式不对' }),
+    }))
+
+    await page.goto(`${base}/?__mp_token=${token}`)
+    await page.fill('input[name=city]', '深圳')
+    await page.click('[data-mp-submit]')
+    await page.waitForSelector('#mp-handoff', { timeout: 10_000 })
+
+    const text = await page.inputValue('#mp-handoff textarea')
+    assert.match(text, /mp interaction 回传 · i-bridge2 · 第 3 版/)
+    assert.match(text, /- 城市：深圳/, '给人看的那份要用页面上的标签，不是 name')
+    assert.match(text, /mp interaction close --id i-bridge2/)
+
+    // 给 agent 看的那份：一行 JSON，不用去猜中文里哪个词是答案。
+    const line = text.split('\n').filter((l) => l.indexOf('mp-answer: ') === 0)[0]
+    const payload = JSON.parse(line.slice('mp-answer: '.length))
+    assert.equal(payload.id, 'i-bridge2')
+    assert.equal(payload.revision, 3)
+    assert.equal(payload.disposition, 'answered')
+    assert.deepEqual(payload.answers, { city: '深圳', order: ['a', 'b'] }, '自定义控件的值也要在回传里')
+
+    // 面板弹出来了，草稿一个字都不能丢：人可能选择再试一次。
+    assert.equal(await page.inputValue('input[name=city]'), '深圳')
+    assert.deepEqual(errors, [], '严格 CSP 下不该有控制台错误')
+  })
+})

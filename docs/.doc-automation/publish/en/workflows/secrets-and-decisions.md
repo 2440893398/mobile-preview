@@ -78,6 +78,48 @@ ask-env.html does not meet the interaction page contract:
 That refusal is real output (evidence E011). The full page contract is in
 `docs/superpowers/specs/2026-09-16-interaction-page-contract.md`.
 
+## When the phone cannot submit
+
+Tunnels drop. cloudflared loses the edge and re-registers twenty-odd seconds later, and a
+submission that lands in that window never reaches this machine: what comes back is
+Cloudflare's own error page rather than this machine's JSON. The page used to say only "that
+did not go through, try again" — while the answer was still on the phone's screen and the only
+way forward was to ask for a new link and fill the whole page in again.
+
+There are now two fallbacks, both in the page, and neither needs anything from you or from the
+person holding the phone:
+
+- **The page retries itself.** A submission that did not arrive is resent five times over
+   about half a minute (1.2s, 2.5s, 5s, 10s, 18s). An answer is deduplicated by its submission
+   id, so the attempt that gets through after a reconnect comes back with the same receipt
+   rather than filing a second answer, and an answered link is held open a little longer for
+   exactly these late retries. Across a twenty-second outage the phone sees "retrying", then
+   the receipt.
+- **Handing the answer back as text.** When the retries run out, or this machine says outright
+   that it will not take the submission, the page turns the answer into something pasteable,
+   with a copy button:
+
+   ```text
+   【mp interaction 回传 · i-20387a · 第 1 版】
+   手机上没能把答案交回你的机器。下面就是我的回答，按它继续，不用再发新链接。
+
+   - 文档形态：整套镜像（mirror）
+   - 备注：先做中文
+
+   mp-answer: {"id":"i-20387a","revision":1,"disposition":"answered","reason":null,"answers":{"doc":"mirror","note":"先做中文"}}
+
+   收到后收个尾：mp interaction close --id i-20387a
+   ```
+
+   (The block is Chinese, like every other phone-facing string in this tool.) Pasting it
+   into the chat counts as answering the page. The first lines are for a person to
+   read, the `mp-answer:` line is for the agent to parse. An agent that receives one acts on it
+   and runs `mp interaction close --id <id>` to tidy up; it should not send a new link and make
+   someone fill the same page in twice.
+
+A page can put its own button on this: `MP.handoff()` returns the text, `MP.rescue()` opens the
+panel.
+
 ## When several are open at once
 
 `secret` and `interaction` both take a slot keyed by a random id. With one slot left open,

@@ -285,6 +285,20 @@ normal case** — read `status`, do not read the exit code:
 - `expired_link` — the link lapsed unanswered. The draft survives; reopen with
   `mp.cmd interaction ask --id <id> --html <file>`.
 
+There is a fourth way an answer can arrive, and it does not come through
+`wait` at all. When the phone cannot submit — cloudflared dropped the edge,
+the link lapsed — the page retries on its own for half a minute and then
+turns the answer into text the user can paste into the chat: a block headed
+`【mp interaction 回传 · <id> · 第 N 版】`, a readable list, and one
+`mp-answer: {"id":…,"disposition":…,"answers":{…}}` line.
+
+**A pasted block of that shape is the answer.** Read `answers` from the
+`mp-answer:` line, treat `disposition` exactly as you would from `wait`, act
+on it, and run `mp.cmd interaction close --id <id>`. Do not re-ask, and do not
+send a new link: they already filled the page in, on a phone, and the only
+thing that failed was the wire home. Asking them to do it again is the
+failure this fallback exists to prevent.
+
 Re-asking with `--id` keeps one thread and bumps the revision, so a tab still
 showing the old page cannot answer the new question. Use it after a
 `needs_clarification`: respond to their objection first, then send the new page.

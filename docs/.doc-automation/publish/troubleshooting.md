@@ -56,6 +56,21 @@ several interactions are open (i-2b944d, i-f1ed0b); pass --id.
 `nothing carries data-mp-submit, so the page has no way to submit`。照着改再跑一次即可，
 不合规的页面不会上线。
 
+## 手机上点了提交，页面说没送出去
+
+先看页面在说哪一种：
+
+- **"正在自动重试（n/5）"** —— 隧道多半正在重连，不用管，也不要刷新页面。半分钟内重发
+  五次，成了就出回执；填的内容一直都在。
+- **"用下面这段话直接回给 AI"** —— 重试用完了。页面已经把答案变成一段可复制的文字，
+  开头是 `【mp interaction 回传 · i-xxxxxx`。复制它，粘贴回和 AI 的对话里发出去，这就算
+  答过了，不用重新要链接。
+- **"这个页面不是最新的了"** —— 问题已经被重新问过一遍，回聊天里要最新的那条链接。
+
+想知道当时到底断在哪，看这个问题的隧道日志：`mp interaction status` 会打印路径，
+日志里的 `Lost connection with the edge` 和随后的 `Registered tunnel connection` 就是那段
+空窗（证据 E009）。
+
 ## 找不到预览在哪
 
 预览跑在后台，没有窗口，桌面上不会出现任何东西。`mp status` 是唯一能看到它的地方，

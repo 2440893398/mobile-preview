@@ -60,6 +60,7 @@
 | `MP.draft(name)` | 读上次草稿里的值，用于自定义控件恢复 |
 | `MP.answers()` | 当前完整 answers |
 | `MP.submit(disposition, extra)` | 程序化提交 |
+| `MP.handoff()` / `MP.rescue()` | 送不出去时的回传文本与面板，见 4.2 |
 | 事件 `mp:ready` | 桥接就绪、草稿已恢复到原生控件后触发；自定义控件在此事件里调 `MP.draft` |
 
 草稿：任何 input/change 或 `MP.set` 后写 localStorage（键 `mp:draft:<requestId>:<contentDigest>`，按页面而不是按 revision，链接过期后原页重发能接上），并 800 ms 防抖 POST `/draft` 到 CLI。
@@ -79,6 +80,35 @@
 页面是照着 390 px 手机写的，但同一条链接经常被在电脑上再点开一次——那时没有列宽的 body 就是一行和显示器一样长的字。三件事保证它不和页面打架：注入在页面自己的样式之前，图片这类规则按顺序输给页面；列宽选择器写成 `html body`（0,1,1），才压得过每个页面开头那句 `body{margin:0}`；不加媒体查询，因为窄屏下 `max-width` 和 `auto` 边距本来就不生效，手机端渲染一个像素都不变。body 的背景会照 CSS 规则继续铺满画布，所以居中不会露出两条白边。要整幅出血的页面用 `<body data-mp-layout="full">` 退出。
 
 没有 `[data-mp-receipt]` 时追加的底部回执条仍然通栏，但左右内边距按同一个变量算，文字与正文列对齐，而不是黏在 1440 px 屏幕的左下角。
+
+### 4.2 提交送不到时
+
+隧道会断。cloudflared 掉线到重新注册之间有二十多秒空窗，落在里面的 `POST /submit` 拿回的
+是 Cloudflare 自己的一页 HTML，不是本机的 JSON。2026-09-19 的 `i-20387a` 就是这样丢掉一次
+作答的：页面只说了一句"没有提交成功，再试一次"，而那一页答案还在手机上。
+
+桥接因此把失败分成两类，判据是**回来的是不是这台机器的 JSON**：
+
+| 回应 | 判定 | 处置 |
+|---|---|---|
+| `{status:"submitted"}` | 成功 | 出回执，清草稿 |
+| `{status:"stale"}` | 问题已被重问 / 已答过 | 让用户回聊天要新链接，不重试 |
+| `{status:"rejected"\|"error"}` | 本机明确不收 | 不重试，直接给回传文本 |
+| `{status:"busy"}`、非 JSON、网络失败 | 根本没到本机 | 重试 1.2s / 2.5s / 5s / 10s / 18s |
+
+重试用的是同一个 `responseId`，本机按它去重，重连后送达的那次拿回同一张回执，不会变成第二
+个答案。为了接住这种迟到的重试，`interaction-daemon` 在收到作答后把表单多留 45 秒
+（`closeDelayMs`）再关。
+
+重试用尽仍送不出去时，页面弹出回传面板：一段可复制的文本，前面是给人读的列表，最后是给
+agent 读的一行 `mp-answer: {...}`（答案超过 6000 字符时省略该行，以列表为准）。用户把它粘
+回对话即等于作答；agent 照它继续并 `mp interaction close --id <id>` 收尾。
+
+| 调用 | 作用 |
+|---|---|
+| `MP.handoff(disposition?, reason?)` | 返回回传文本，页面可自己放按钮 |
+| `MP.rescue(disposition?, reason?)` | 直接打开回传面板 |
+
 
 ## 5. 传输
 

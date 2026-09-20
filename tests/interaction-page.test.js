@@ -203,3 +203,21 @@ test('页面把 <head> 省了、正文又有 <header> 时，样式不会被塞�
   assert.ok(out.indexOf('<style data-mp-base>') < out.indexOf('<body>'), '必须落在 <body> 之前')
   assert.ok(!/<header>\s*<style data-mp-base>/.test(out))
 })
+
+// —— 0.5.4 提交兜底 ——
+
+test('桥接脚本里的反斜杠要活着到浏览器——模板字面量会悄悄把它吃掉', () => {
+  // BRIDGE_JS 嵌在一个模板字面量里，源码写 \s 发出去就成了 s：正则从此静默
+  // 失效，语法是对的，测试也照样绿。所以盯的是真正发出去的那一份。
+  assert.ok(BRIDGE_JS.includes(String.raw`/\s+/g`), '空白正则里的反斜杠没了，它现在只匹配字母 s')
+  assert.ok(BRIDGE_JS.includes(String.raw`join('\n')`), '换行转义没了，回传会挤成一行')
+})
+
+test('提交不再是一锤子买卖：送不到会自己重试，重试完了还有一段可粘贴的话', () => {
+  // 隧道掉线二十秒就够让一次提交落空。这两样缺一样，人就只剩「重新要一条
+  // 链接，再填一遍」这一个选择。
+  assert.match(BRIDGE_JS, /RETRY_DELAYS/, '没有重试表')
+  assert.match(BRIDGE_JS, /mp-answer: /, '没有给 agent 读的那一行')
+  assert.match(BRIDGE_JS, /mp interaction close --id/, '回传里要带上收尾命令')
+  assert.match(BRIDGE_JS, /handoff:/, '页面要能自己拿到这段话')
+})

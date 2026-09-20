@@ -57,8 +57,11 @@ export async function runInteractionDaemon({
   startTunnelFn = startTunnel,
   ipcPath = state.interactionIpcPath(id),
   // Long enough for the 200 to cross the edge and the receipt to render
-  // before cloudflared goes away.
-  closeDelayMs = 1_500,
+  // before cloudflared goes away — and long enough to outlast the page
+  // retrying on its own. A receipt lost to a reconnect brings the phone
+  // back with the same responseId half a minute later; a door already shut
+  // would tell someone their answer failed after it had arrived.
+  closeDelayMs = 45_000,
   exitFn = (code) => process.exit(code),
 }) {
   if (!INTERACTION_ID_RE.test(String(id))) throw new Error(`bad interaction id ${JSON.stringify(id)}`)

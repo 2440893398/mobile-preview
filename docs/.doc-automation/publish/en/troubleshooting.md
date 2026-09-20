@@ -57,6 +57,23 @@ When `mp interaction ask` refuses to issue a link, it lists each rule the page f
 `nothing carries data-mp-submit, so the page has no way to submit`. Fix and rerun; a failing
 page never goes live.
 
+## The phone submitted and the page says it did not go through
+
+Read which of the three the page is saying (the page's own text is Chinese):
+
+- **"正在自动重试（n/5）" — retrying.** The tunnel is most likely reconnecting. Leave it alone
+  and do not reload: the submission is resent five times over about half a minute, and the
+  receipt appears once one gets through. Nothing that was filled in is lost.
+- **"用下面这段话直接回给 AI" — the retries ran out.** The page has already turned the answer
+  into a block of copyable text starting `【mp interaction 回传 · i-xxxxxx`. Copy it and paste
+  it into the chat; that counts as answering, and no new link is needed.
+- **"这个页面不是最新的了" — the question was asked again.** Go back to the chat for the
+  current link.
+
+To see what actually broke, read that question's tunnel log — `mp interaction status` prints
+the path. `Lost connection with the edge` followed by `Registered tunnel connection` is the
+window the submission fell into (evidence E009).
+
 ## You cannot find where the preview is
 
 A preview runs in the background with no window, so nothing appears on the desktop.

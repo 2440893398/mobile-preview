@@ -168,6 +168,14 @@ export const BRIDGE_JS = `
   var done = false
   var saveTimer = null
   var recovered = null
+  var sending = false
+  var pending = null
+  var generation = 0
+  var retryTimer = null
+  // Five goes over about half a minute. Sized against what actually broke:
+  // cloudflared losing the edge and coming back twenty-odd seconds later,
+  // with the person still holding the phone, waiting for a receipt.
+  var RETRY_DELAYS = [1200, 2500, 5000, 10000, 18000]
 
   function all(sel, root) {
     return Array.prototype.slice.call((root || document).querySelectorAll(sel))
@@ -267,7 +275,7 @@ export const BRIDGE_JS = `
     })
   }
 
-  function tell(text, ok) {
+  function tell(text, tone) {
     var target = document.querySelector('[data-mp-receipt]')
     if (target) {
       target.textContent = text
@@ -281,18 +289,360 @@ export const BRIDGE_JS = `
       bar.setAttribute('role', 'status')
       document.body.appendChild(bar)
     }
+    // Three tones, because "still going" is not "it failed": a page that
+    // says the same red thing while it retries has already told the person
+    // their answer is lost.
+    var back = tone === 'ok' ? '#166534' : (tone === 'wait' ? '#92400e' : '#9f1239')
     // Full-bleed bar, but its text lines up with the content column: on a
     // wide window a receipt pinned to the far bottom-left is nowhere near
     // where the person was just reading.
     bar.style.cssText = 'position:fixed;left:0;right:0;bottom:0;box-sizing:border-box;z-index:2147483647;'
       + 'padding:14px max(16px, calc((100% - var(--mp-content-width, 46rem)) / 2));'
       + 'font:15px/1.5 -apple-system,"SF Pro Text","PingFang SC","Noto Sans SC",sans-serif;color:#fff;'
-      + 'background:' + (ok ? '#166534' : '#9f1239')
+      + 'background:' + back
     bar.textContent = text
   }
 
-  function submit(disposition, extra) {
+  // ---- the way back, for when the tunnel is not one ----
+  //
+  // Everything above assumes the phone can reach this machine. Sometimes it
+  // cannot: cloudflared loses the edge for twenty seconds, the submit lands
+  // in the hole, and the page tells someone to try again when what they
+  // actually have to do is ask for a new link and fill the whole page in
+  // again. Their answer was on the screen the entire time.
+  //
+  // So it is also written out as something they can paste into the chat
+  // themselves, carrying the id, the revision and the values — one part a
+  // person can read, one part an agent can parse. A broken wire then costs
+  // one paste instead of one re-ask.
+
+  function clean(s) {
+    return String(s == null ? '' : s).replace(/\\s+/g, ' ').trim()
+  }
+
+  function labelOf(el) {
+    var lab = null
+    if (el.id) {
+      var labs = all('label', scope())
+      for (var i = 0; i < labs.length; i += 1) {
+        if (labs[i].htmlFor === el.id) { lab = labs[i]; break }
+      }
+    }
+    if (!lab && el.closest) lab = el.closest('label')
+    var t = lab ? lab.textContent : ''
+    if (!t) t = el.getAttribute('aria-label') || el.getAttribute('title') || ''
+    return clean(t).slice(0, 60)
+  }
+
+  // What the question was called, not what the chosen option was called: for
+  // a radio group the input's own label is the option, so only a legend — or
+  // the label of a lone free-text control — can stand in for the field.
+  function fieldLabel(name, els) {
+    for (var i = 0; i < els.length; i += 1) {
+      var fs = els[i].closest ? els[i].closest('fieldset') : null
+      var legend = fs ? fs.querySelector('legend') : null
+      if (legend) return clean(legend.textContent).slice(0, 60)
+    }
+    if (els.length === 1) {
+      var t = (els[0].type || '').toLowerCase()
+      if (t !== 'radio' && t !== 'checkbox') {
+        var own = labelOf(els[0])
+        if (own) return own
+      }
+    }
+    return name
+  }
+
+  function optionLabel(els, value) {
+    for (var i = 0; i < els.length; i += 1) {
+      var el = els[i]
+      var t = (el.type || '').toLowerCase()
+      if ((t === 'radio' || t === 'checkbox') && el.value === value) {
+        var l = labelOf(el)
+        if (l) return l
+      }
+      if (el.tagName === 'SELECT') {
+        var opts = all('option', el)
+        for (var j = 0; j < opts.length; j += 1) {
+          if (opts[j].value === value) return clean(opts[j].textContent).slice(0, 60)
+        }
+      }
+    }
+    return null
+  }
+
+  function oneValue(els, v) {
+    if (v === null || v === undefined || v === '') return '（空）'
+    if (v === true) return '是'
+    if (v === false) return '否'
+    if (typeof v === 'object') return JSON.stringify(v)
+    var label = optionLabel(els, String(v))
+    if (label && label !== String(v)) return label + '（' + v + '）'
+    return String(v)
+  }
+
+  function valueText(els, v) {
+    if (Array.isArray(v)) {
+      if (!v.length) return '（空）'
+      return v.map(function (x) { return oneValue(els, x) }).join('、')
+    }
+    return oneValue(els, v)
+  }
+
+  // Past this the machine-readable copy stops being something anyone can
+  // paste into a chat; the readable list above it still carries the answer.
+  var HANDOFF_JSON_LIMIT = 6000
+
+  function handoffText(disposition, reason) {
+    var ans = collect()
+    var byName = {}
+    controls().forEach(function (el) {
+      if (!byName[el.name]) byName[el.name] = []
+      byName[el.name].push(el)
+    })
+    var lines = []
+    Object.keys(ans).forEach(function (name) {
+      var els = byName[name] || []
+      lines.push('- ' + fieldLabel(name, els) + '：' + valueText(els, ans[name]).slice(0, 300))
+    })
+    if (!lines.length) lines.push('-（页面上还没填任何东西）')
+
+    var payload = JSON.stringify({
+      id: R.requestId,
+      revision: R.revision || 1,
+      disposition: disposition,
+      reason: reason || null,
+      answers: ans
+    })
+    var head = '【mp interaction 回传 · ' + R.requestId + ' · 第 ' + (R.revision || 1) + ' 版】'
+    var why = disposition === 'answered'
+      ? '手机上没能把答案交回你的机器。下面就是我的回答，按它继续，不用再发新链接。'
+      : '手机上没能把这次回复交回你的机器。我的回复是 ' + disposition
+        + (reason ? '（' + reason + '）' : '') + '，页面上填到这里：'
+    return [
+      head,
+      why,
+      '',
+      lines.join('\\n'),
+      '',
+      payload.length > HANDOFF_JSON_LIMIT
+        ? '（答案太长，机器可读的那份就不贴了，以上面这份为准）'
+        : 'mp-answer: ' + payload,
+      '',
+      '收到后收个尾：mp interaction close --id ' + R.requestId
+    ].join('\\n')
+  }
+
+  var panel = null
+
+  function styleButton(b, primary) {
+    b.type = 'button'
+    b.style.cssText = 'flex:1 1 auto;min-height:44px;padding:10px 14px;border-radius:10px;'
+      + 'font:15px/1.2 inherit;cursor:pointer;'
+      + (primary
+        ? 'border:0;background:#1d4ed8;color:#fff'
+        : 'border:1px solid #cbd5e1;background:#fff;color:#0f172a')
+  }
+
+  function copyTo(clip, button) {
+    var settled = function (label) {
+      button.textContent = label
+      setTimeout(function () { button.textContent = '复制' }, 2500)
+    }
+    var byHand = function () {
+      try {
+        clip.focus()
+        clip.select()
+        if (clip.setSelectionRange) clip.setSelectionRange(0, String(clip.value).length)
+        if (document.execCommand && document.execCommand('copy')) return settled('已复制')
+      } catch (e) { /* fall through to telling them to do it by hand */ }
+      return settled('长按上面的文字复制')
+    }
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(clip.value).then(function () { settled('已复制') }, byHand)
+        return
+      }
+    } catch (e) { /* no clipboard API: select it for them instead */ }
+    byHand()
+  }
+
+  function rescue(disposition, reason) {
+    var text = handoffText(disposition || 'answered', reason || null)
+    if (panel) {
+      panel.clip.value = text
+      panel.root.hidden = false
+      return text
+    }
+
+    var root = document.createElement('div')
+    root.id = 'mp-handoff'
+    root.setAttribute('role', 'dialog')
+    root.setAttribute('aria-label', '把答案手动回传')
+    root.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;z-index:2147483647;display:flex;'
+      + 'align-items:flex-end;justify-content:center;background:rgba(15,23,42,.55);padding:12px;'
+      + 'box-sizing:border-box;font:15px/1.6 -apple-system,"SF Pro Text","PingFang SC","Noto Sans SC",sans-serif'
+
+    var card = document.createElement('div')
+    card.style.cssText = 'width:100%;max-width:34rem;max-height:86vh;overflow:auto;box-sizing:border-box;'
+      + 'background:#fff;color:#0f172a;border-radius:16px;padding:16px;box-shadow:0 12px 40px rgba(0,0,0,.35)'
+
+    var title = document.createElement('div')
+    title.textContent = '提交没送到，这条路还通'
+    title.style.cssText = 'font-size:18px;font-weight:700;margin-bottom:6px'
+
+    var note = document.createElement('div')
+    note.textContent = '复制下面这段话，回到和 AI 的对话里粘贴发出去，就等于你在这一页上答过了。'
+      + '不用重新要链接，也不用再填一遍。'
+    note.style.cssText = 'color:#475569;margin-bottom:10px'
+
+    var clip = document.createElement('textarea')
+    clip.readOnly = true
+    clip.value = text
+    clip.setAttribute('aria-label', '要粘贴回对话里的内容')
+    clip.style.cssText = 'width:100%;height:12em;box-sizing:border-box;padding:10px;border:1px solid #cbd5e1;'
+      + 'border-radius:10px;background:#f8fafc;color:#0f172a;resize:vertical;'
+      + 'font:13px/1.5 ui-monospace,Menlo,Consolas,monospace;-webkit-user-select:text;user-select:text'
+
+    var row = document.createElement('div')
+    row.style.cssText = 'display:flex;gap:8px;flex-wrap:wrap;margin-top:12px'
+
+    var copy = document.createElement('button')
+    copy.textContent = '复制'
+    styleButton(copy, true)
+    copy.addEventListener('click', function () { copyTo(clip, copy) })
+
+    var again = document.createElement('button')
+    again.textContent = '再试一次提交'
+    styleButton(again, false)
+    again.addEventListener('click', function () { retryNow() })
+
+    var hide = document.createElement('button')
+    hide.textContent = '回到页面'
+    styleButton(hide, false)
+    hide.addEventListener('click', function () { root.hidden = true })
+
+    row.appendChild(copy)
+    row.appendChild(again)
+    row.appendChild(hide)
+    card.appendChild(title)
+    card.appendChild(note)
+    card.appendChild(clip)
+    card.appendChild(row)
+    root.appendChild(card)
+    document.body.appendChild(root)
+    panel = { root: root, clip: clip }
+    return text
+  }
+
+  // One attempt over the wire. This machine always answers JSON, so a body
+  // that is not JSON did not come from it: it is cloudflared's own error page
+  // from a tunnel that is reconnecting, or from a link that has lapsed.
+  // Nothing was refused — it never arrived, which is a different thing, and
+  // the only one worth retrying.
+  function post(body) {
+    return fetch('/submit', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    }).then(function (res) {
+      return res.text().then(function (text) {
+        var data = null
+        try { data = JSON.parse(text) } catch (e) { data = null }
+        if (!data || typeof data.status !== 'string') return { transport: true }
+        return { data: data }
+      })
+    })['catch'](function () { return { transport: true } })
+  }
+
+  function sleep(ms) {
+    return new Promise(function (resolve) {
+      clearTimeout(retryTimer)
+      retryTimer = setTimeout(resolve, ms)
+    })
+  }
+
+  function enable() {
+    all('[data-mp-submit]').forEach(function (b) { b.disabled = false })
+  }
+
+  function disable() {
+    all('[data-mp-submit]').forEach(function (b) { b.disabled = true })
+  }
+
+  function landed(res) {
+    done = true
+    sending = false
+    clearTimeout(saveTimer)
+    clearTimeout(retryTimer)
+    try { localStorage.removeItem(KEY) } catch (e) {}
+    if (panel) panel.root.hidden = true
+    tell('已提交，回执 ' + String(res.receiptId).slice(0, 8) + '。任务会接着往下走，这个页面可以关掉。', 'ok')
+    document.dispatchEvent(new CustomEvent('mp:submitted', { detail: res }))
+    return res
+  }
+
+  // Retried on its own, and safe to retry: the submission is idempotent on
+  // responseId, so one that crosses a tunnel which has come back up gets the
+  // same receipt rather than filing a second answer.
+  function attemptSubmit(body, n, mine) {
+    sending = true
+    return post(body).then(function (r) {
+      if (done || mine !== generation) return null
+      var data = r.data
+
+      if (data && data.status === 'submitted') return landed(data)
+
+      if (data && data.status === 'stale') {
+        sending = false
+        enable()
+        tell('这个页面不是最新的了，回到聊天里要一条新链接。', 'bad')
+        return data
+      }
+
+      // This machine was reached and said no. A retry would be refused the
+      // same way, so the way back is the only one left.
+      if (data && (data.status === 'rejected' || data.status === 'error')) {
+        sending = false
+        enable()
+        tell('这台机器没收下这次提交。用下面这段话直接回给 AI。', 'bad')
+        rescue(body.disposition, body.reason)
+        return data
+      }
+
+      // A busy reply is the other copy of this same submission still in
+      // flight; anything else never reached this machine at all. Both are worth
+      // another go, and the wait between goes is what carries a page across
+      // a twenty-second reconnect.
+      if (n < RETRY_DELAYS.length) {
+        tell('提交没送出去，正在自动重试（' + (n + 1) + '/' + RETRY_DELAYS.length + '）……填的内容都还在。', 'wait')
+        return sleep(RETRY_DELAYS[n]).then(function () {
+          if (done || mine !== generation) return null
+          return attemptSubmit(body, n + 1, mine)
+        })
+      }
+
+      sending = false
+      enable()
+      tell('一直提交不上去，多半是隧道断了。用下面这段话直接回给 AI，就算回答了。', 'bad')
+      rescue(body.disposition, body.reason)
+      return null
+    })
+  }
+
+  function retryNow() {
     if (done) return Promise.resolve(null)
+    if (!pending) return submit('answered')
+    clearTimeout(retryTimer)
+    generation += 1
+    if (panel) panel.root.hidden = true
+    disable()
+    tell('正在重试……', 'wait')
+    return attemptSubmit(pending, 0, generation)
+  }
+
+  function submit(disposition, extra) {
+    if (done || sending) return Promise.resolve(null)
     var d = disposition || 'answered'
     // Only a real answer has to be complete. "The premise is wrong" is often
     // exactly what someone wants to say before they can fill anything in.
@@ -302,7 +652,7 @@ export const BRIDGE_JS = `
         gaps[0].setAttribute('aria-invalid', 'true')
         if (gaps[0].focus) gaps[0].focus()
         if (gaps[0].scrollIntoView) gaps[0].scrollIntoView({ block: 'center' })
-        tell('还有必填项没填。', false)
+        tell('还有必填项没填。', 'bad')
         return Promise.resolve(null)
       }
     }
@@ -321,40 +671,10 @@ export const BRIDGE_JS = `
     }
     if (extra) for (var k in extra) if (has(extra, k)) body[k] = extra[k]
 
-    var buttons = all('[data-mp-submit]')
-    buttons.forEach(function (b) { b.disabled = true })
-
-    return fetch('/submit', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body)
-    }).then(function (res) {
-      return res.json()['catch'](function () { return { status: 'error' } })
-    }).then(function (res) {
-      if (res && res.status === 'submitted') {
-        done = true
-        clearTimeout(saveTimer)
-        try { localStorage.removeItem(KEY) } catch (e) {}
-        tell('已提交，回执 ' + String(res.receiptId).slice(0, 8) + '。任务会接着往下走，这个页面可以关掉。', true)
-        document.dispatchEvent(new CustomEvent('mp:submitted', { detail: res }))
-        return res
-      }
-      // The other copy of this same submission is still in flight, or has
-      // already succeeded. Either way it, not this one, has the last word:
-      // saying "it failed" here would be saying it about an answer that
-      // arrived.
-      if (done || (res && res.status === 'busy')) return res
-      buttons.forEach(function (b) { b.disabled = false })
-      tell(res && res.status === 'stale'
-        ? '这个页面不是最新的了，回到聊天里要一条新链接。'
-        : '没有提交成功，再试一次。', false)
-      return res
-    })['catch'](function () {
-      if (done) return null
-      buttons.forEach(function (b) { b.disabled = false })
-      tell('提交失败，可能是网络断了。恢复后再点一次，填的内容还在。', false)
-      return null
-    })
+    pending = body
+    generation += 1
+    disable()
+    return attemptSubmit(body, 0, generation)
   }
 
   window.MP = {
@@ -366,7 +686,11 @@ export const BRIDGE_JS = `
       return d.answers[name]
     },
     answers: collect,
-    submit: submit
+    submit: submit,
+    // The same text the page falls back to, for a page that would rather put
+    // its own button on it.
+    handoff: function (disposition, reason) { return handoffText(disposition || 'answered', reason || null) },
+    rescue: function (disposition, reason) { return rescue(disposition, reason) }
   }
 
   function local() {

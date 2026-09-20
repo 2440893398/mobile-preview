@@ -35,7 +35,9 @@ defaults:
       path: ""
     values:
       layout: default
-      image: /mobile-preview/assets/screenshots/phone-preview-demo.png
+      # 路径不带 baseurl：seo-tag 自己会拼 url + baseurl，
+      # 写成 /mobile-preview/... 会拼成两遍，社交卡片的图就 404。
+      image: /assets/screenshots/phone-preview-demo.png
   - scope:
       path: "en"
     values:

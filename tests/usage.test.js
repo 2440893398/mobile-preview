@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { spawnSync } from 'node:child_process'
@@ -9,6 +9,9 @@ import { COMMANDS, VERSION, renderCommandHelp, renderHelp } from '../src/usage.j
 
 const BIN = fileURLToPath(new URL('../src/bin.js', import.meta.url))
 const ROOT = fileURLToPath(new URL('..', import.meta.url))
+const DOCS_DIR = 'docs'
+const GUIDE_DIR = 'guide'
+const SEP = /[\/]/
 
 function mp(args) {
   const dir = mkdtempSync(join(tmpdir(), 'mp-usage-'))
@@ -184,11 +187,21 @@ test('Claude Code 与 Codex 的 manifest 描述同一个插件', () => {
 
 // 文档里教用户敲的每一个 mp 参数，都必须是 CLI 真的认的参数。
 // 反过来漏写不算错（帮助文本才是权威），但教一个不存在的参数一定是错。
+// 手册整棵树都算，以后新加的页面自动进来：教错一个参数的页面，不该因为文件名
+// 没被写进清单就逃掉。
+function manualFiles() {
+  return readdirSync(join(ROOT, DOCS_DIR, GUIDE_DIR), { recursive: true })
+    .map((f) => String(f))
+    .filter((f) => f.endsWith('.md'))
+    .map((f) => [DOCS_DIR, GUIDE_DIR, ...f.split(SEP)])
+}
+
 const DOC_FILES = [
   ['README.md'],
   ['skill', 'SKILL.md'],
   ['plugins', 'mobile-preview', 'README.md'],
   ['plugins', 'mobile-preview', 'skills', 'mobile-preview', 'SKILL.md'],
+  ...manualFiles(),
 ]
 
 function documentedFlags(text) {
@@ -218,10 +231,32 @@ test('文档里出现的 mp 参数都是 CLI 真的支持的参数', () => {
   }
 })
 
-test('README 的参数表覆盖 mp start 的每一个参数', () => {
-  const readme = readRoot('README.md')
-  for (const flag of Object.keys(COMMANDS.start.flags)) {
-    assert.match(readme, new RegExp(`\\|\\s*\`--${flag}\``), `README 的表里少了 --${flag}`)
+// 参数表在 8e45eca 里从 README 搬进了操作手册，这条测试却还在读 README，于是
+// 它保护的那件事——每个参数都在文档里写着——从那天起就没人守了。手册是中英两份
+// 全量镜像，所以两份都要查：只写进其中一边的参数，是这里最该抓的那种漂移。
+const REFERENCE_FILES = [
+  ['docs', 'guide', 'reference', 'commands.md'],
+  ['docs', 'guide', 'en', 'reference', 'commands.md'],
+]
+
+function tableFlags(text) {
+  const found = new Set()
+  for (const line of text.split(/\r?\n/)) {
+    if (!line.trimStart().startsWith('|')) continue
+    // 表里写的是 `--port <n>`，所以只认开头那一段。
+    for (const m of line.matchAll(/`--([a-z][a-z0-9-]*)/g)) found.add(m[1])
+  }
+  return found
+}
+
+test('手册的参数表覆盖每个命令的每一个参数，中英两份都要有', () => {
+  for (const parts of REFERENCE_FILES) {
+    const documented = tableFlags(readRoot(...parts))
+    for (const [command, spec] of Object.entries(COMMANDS)) {
+      for (const flag of Object.keys(spec.flags)) {
+        assert.ok(documented.has(flag), `${parts.join('/')} 的表里少了 mp ${command} 的 --${flag}`)
+      }
+    }
   }
 })
 

@@ -7,8 +7,11 @@ Temporary, authenticated preview of a locally running app for phone-based AI wor
 Everything about using mp lives in the manual — installation, the first preview, screenshots,
 secrets, decision pages, every flag, and troubleshooting:
 
-- [操作手册（中文）](docs/guide/index.md)
-- [Operating manual (English)](docs/guide/en/index.md)
+- **[操作手册（中文）](https://2440893398.github.io/mobile-preview/)**
+- **[Operating manual (English)](https://2440893398.github.io/mobile-preview/en/)**
+
+Same pages in the repository, if you prefer reading them here:
+[中文](docs/guide/index.md) · [English](docs/guide/en/index.md)
 
 This file keeps only what the manual does not cover: the shortest install path, the measured
 behaviour on mainland-China networks, why the skill triggers the way it does, and the security

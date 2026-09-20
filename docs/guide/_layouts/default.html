@@ -55,8 +55,10 @@ th,td{border:1px solid var(--line);padding:8px 10px;text-align:left;vertical-ali
 th{background:var(--soft)}
 blockquote{margin:16px 0;padding:2px 16px;border-left:3px solid var(--line);color:var(--muted)}
 img{max-width:100%;height:auto;border-radius:10px;border:1px solid var(--line)}
-.mermaid{margin:20px 0;text-align:center}
+.mermaid{margin:20px 0;text-align:center;overflow-x:auto;-webkit-overflow-scrolling:touch}
 .mermaid svg{max-width:100%;height:auto}
+/* 手机上宁可横向滚，也不要把图缩到字看不清：这份手册的读者本来就在手机上。 */
+@media (max-width:640px){.mermaid svg{max-width:none;min-width:520px}}
 footer{margin-top:64px;padding-top:20px;border-top:1px solid var(--line);color:var(--muted);font-size:14px}
 </style>
 </head>

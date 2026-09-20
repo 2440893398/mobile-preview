@@ -1,0 +1,32 @@
+<!doctype html><html lang="zh-CN"><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>演示应用</title>
+<style>
+ *{box-sizing:border-box}
+ body{margin:0;min-height:100vh;font:16px/1.7 system-ui,"Microsoft YaHei",sans-serif;background:#0f172a;color:#e2e8f0;display:flex;flex-direction:column}
+ header{padding:22px 20px;background:#1e293b;border-bottom:1px solid #334155}
+ h1{margin:0;font-size:20px}
+ header p{margin:4px 0 0;font-size:13px;color:#94a3b8}
+ main{padding:20px;flex:1;display:flex;flex-direction:column;gap:14px}
+ .card{background:#1e293b;border:1px solid #334155;border-radius:12px;padding:16px}
+ .card h2{margin:0 0 8px;font-size:15px;color:#a7f3d0}
+ .row{display:flex;justify-content:space-between;padding:9px 0;border-bottom:1px solid #263449;font-size:14px}
+ .row:last-child{border:0}
+ .row b{font-weight:600;color:#f1f5f9}
+ button{font:inherit;padding:12px 20px;border:0;border-radius:10px;background:#22c55e;color:#06240f;font-weight:600}
+ footer{padding:16px 20px;font-size:12px;color:#64748b;border-top:1px solid #1e293b}
+</style>
+<header><h1>演示应用</h1><p>跑在本机 127.0.0.1:4173</p></header>
+<main>
+ <div class="card"><h2>这是什么</h2>一个只存在于你这台电脑上的页面。把它交给手机，靠的就是 <code>mp start</code>。</div>
+ <div class="card"><h2>订单列表</h2>
+  <div class="row"><span>#1024 运动鞋</span><b>¥299</b></div>
+  <div class="row"><span>#1025 保温杯</span><b>¥89</b></div>
+  <div class="row"><span>#1026 机械键盘</span><b>¥459</b></div>
+  <div class="row"><span>#1027 显示器支架</span><b>¥179</b></div>
+ </div>
+ <div class="card"><h2>交互</h2><button id="b">点我</button> <span id="s"></span></div>
+ <div class="card"><h2>为什么要在手机上看</h2>字号、点击热区、横向溢出，这些在电脑上缩窗口是看不准的。</div>
+</main>
+<footer>mp capture 抓到的就是这一整页</footer>
+<script>document.getElementById('b').onclick=()=>document.getElementById('s').textContent='已点击'</script>

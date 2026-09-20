@@ -1,5 +1,8 @@
 # Mobile Preview Codex Plugin
 
+Step-by-step manual: [操作手册（中文）](../../docs/guide/index.md) ·
+[Operating manual (English)](../../docs/guide/en/index.md)
+
 This plugin teaches Codex when and how to use the `mp` CLI across projects.
 It does not replace the CLI or install Cloudflare, Playwright, or ffmpeg for
 you. Install the `mobile-preview` tool once, run `npm link`, and then the

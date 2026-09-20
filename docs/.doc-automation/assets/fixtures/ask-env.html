@@ -1,0 +1,12 @@
+<!doctype html><html lang="zh-CN"><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1"><title>部署到哪个环境</title>
+<style>figure{margin:0 0 16px}.bar{height:34px;border-radius:6px;display:flex;align-items:center;padding:0 10px;color:#fff;font:14px system-ui}</style>
+<h1>部署到哪个环境</h1>
+<figure>
+  <div class="bar" style="background:#0ea5e9;width:55%">预发 · 出错只影响自己</div>
+  <div class="bar" style="background:#dc2626;width:100%;margin-top:6px">生产 · 出错影响所有用户</div>
+</figure>
+<label><input type="radio" name="env" value="staging" checked> 预发</label><br>
+<label><input type="radio" name="env" value="prod"> 生产</label>
+<p><button data-mp-submit>提交</button>
+<button data-mp-submit data-mp-disposition="needs_clarification">问题不对</button></p>

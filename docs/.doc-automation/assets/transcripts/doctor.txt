@@ -1,0 +1,19 @@
+﻿# 采集时间：2026-09-20  环境：Windows 11 26200 / PowerShell 5.1 / node v22.x / mp 0.5.3
+
+$ mp.cmd --version
+0.5.3
+
+$ mp.cmd doctor
+ok       mp.cmd: C:\Users\24408\AppData\Roaming\npm\mp.cmd
+ok       cloudflared: C:\Program Files (x86)\cloudflared\cloudflared.exe
+ok       Playwright Chromium: C:\Users\24408\AppData\Local\ms-playwright\chromium-1200
+ok       ffmpeg: C:\Users\24408\AppData\Local\Microsoft\WinGet\Links\ffmpeg.exe
+
+Everything mp needs is present.
+
+On Windows PowerShell, `mp` resolves to the Move-ItemProperty alias.
+Call `mp.cmd` there, or `& mp` in a shell where the alias is removed.
+If your phone cannot reach a preview whose url printed fine, the tunnel
+registered late or not at all — see the cloudflared log named by `mp status`.
+
+If the page loads but its API calls fail on the phone, check for a hardcoded http://127.0.0.1 or http://localhost base url — on the phone that resolves to the phone. Use a relative /api path so it travels through the tunnel.

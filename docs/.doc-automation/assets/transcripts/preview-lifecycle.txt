@@ -1,0 +1,38 @@
+# 采集时间：2026-09-20  环境：Windows 11 26200 / PowerShell 5.1 / node v22 / mp 0.5.3
+# 目标：本机 127.0.0.1:4173 上的演示页；token 已脱敏为 <token>
+
+$ mp.cmd start --port 4173 --ttl 20
+... starting the preview daemon
+... asking trycloudflare.com for a quick tunnel (attempt 1/4)
+... tunnel url issued, waiting for an edge connection (attempt 1/4)
+preview: https://pumps-relationship-descriptions-contest.trycloudflare.com/?__mp_token=<token>
+expires in 20 min
+running in the background, no window — `mp status` to check on it, `mp stop` to end it early
+
+$ mp.cmd status
+port 4173:
+https://pumps-relationship-descriptions-contest.trycloudflare.com/?__mp_token=<token>
+  expires in 20 min, artifacts: 0
+  daemon pid 69824, cloudflared pid 65240
+  log: C:\Users\24408\AppData\Local\mobile-preview\previews\4173.cloudflared.log
+
+port 4180:
+https://produced-barrier-plug-growth.trycloudflare.com/?__mp_token=<token>
+  expires in 52 min, artifacts: 0
+  daemon pid 62460, cloudflared pid 15924
+  log: C:\Users\24408\AppData\Local\mobile-preview\previews\4180.cloudflared.log
+
+previews run in the background with no window: `mp stop [--port N]` ends one, `mp stop --all` ends every one.
+
+# 此时本机有两条预览在跑（4173 与 4180），capture 拒绝猜：
+$ mp.cmd capture
+several previews are active (ports 4173, 4180). Pass --port to pick one.
+ 
+
+$ mp.cmd capture --port 4173
+![shot-12](https://pumps-relationship-descriptions-contest.trycloudflare.com/_a/<token>/shot-12.png)
+
+Page loaded clean: no console errors, no failed requests.
+
+$ mp.cmd stop --port 4173
+stopped port 4173 (2 process tree(s) terminated)

@@ -1,0 +1,186 @@
+# 采集时间：2026-09-20  环境：Windows 11 / mp 0.5.3
+
+$ mp.cmd --help
+mp — temporary authenticated preview of a local app, for phone-based AI workflows
+
+usage: mp <command> [options]
+
+commands:
+  start               Expose the local app on a temporary authenticated public url
+  capture             Screenshot the app at phone size and report what went wrong on the page
+  status              List active previews and how long each has left
+  stop                Tear a preview down and make sure nothing is left running
+  doctor              Check that everything mp needs is installed, on PATH and reachable
+  secret ask          Send the phone a form for credentials the AI may use but never see
+  secret wait         Block until the phone has submitted the form, then report names and fingerprints — never values
+  secret run          Run one of the approved commands with the values in its environment; output comes back redacted
+  secret status       List secret slots: fields, approved uses, time left — never values
+  secret forget       Wipe a slot from memory now rather than at its TTL
+  interaction ask     Put a question on the phone as a page, and get a link to hand over
+  interaction wait    Block until the phone submits, then print the answer as JSON — a timeout is not an error
+  interaction status  List open questions: stage, revision, how much is filled in so far
+  interaction close   End a question now rather than at its TTL, and drop its answer
+
+global options:
+  -h, --help     Show this help, or `mp <command> --help` for one command
+  -v, --version  Print the mp version
+
+On Windows PowerShell, `mp` collides with the built-in Move-ItemProperty
+alias — call `mp.cmd` there. `mp doctor` checks the rest of the setup.
+
+$ mp.cmd start --help
+mp start — Expose the local app on a temporary authenticated public url
+
+usage: mp start [options]
+
+options:
+  --port <n>     Local port to expose — the port your app already listens on (default 5173)
+  --ttl <min>    Minutes before the preview self-terminates (1–1440) (default 30)
+  --grace <min>  Minutes the link stays exchangeable after its first use (0 = one-shot) (default the --ttl value, i.e. reusable until expiry)
+  --dev          Expose a dev server rather than a build (larger attack surface)
+  --json         Print one machine-readable JSON object on stdout instead of prose
+  --help         Show this help
+
+$ mp.cmd capture --help
+mp capture — Screenshot the app at phone size and report what went wrong on the page
+
+usage: mp capture [url] [options]
+
+options:
+  --port <n>             Which preview to capture through (default: the only active one)
+  --device <name>        Playwright device profile, e.g. "Pixel 7", "iPhone 15 Pro" (default iPhone 13)
+  --steps <file>         ESM file default-exporting async (page) => {}, run before the screenshot
+  --video                Record the session as an MP4 (requires ffmpeg on PATH)
+  --wait-for <selector>  Wait until this CSS selector is visible before shooting
+  --wait-ms <n>          Extra milliseconds to wait after the page settles (default 500)
+  --network-idle         Wait for the network to fall idle, not just for load — for API-driven SPAs
+  --full-page            Capture the whole scrollable page, not just the first screen
+  --strict               Exit non-zero when the page had console errors or failed requests
+  --help                 Show this help
+
+$ mp.cmd secret --help
+mp secret — credentials the phone fills in; the AI may use them but never read them
+
+usage: mp secret <subcommand> [options]
+
+subcommands:
+  secret ask     Send the phone a form for credentials the AI may use but never see
+  secret wait    Block until the phone has submitted the form, then report names and fingerprints — never values
+  secret run     Run one of the approved commands with the values in its environment; output comes back redacted
+  secret status  List secret slots: fields, approved uses, time left — never values
+  secret forget  Wipe a slot from memory now rather than at its TTL
+
+Run `mp secret <subcommand> --help` for one subcommand's options.
+
+$ mp.cmd interaction --help
+mp interaction — a decision the user makes on a page; the answer comes back as JSON
+
+usage: mp interaction <subcommand> [options]
+
+subcommands:
+  interaction ask     Put a question on the phone as a page, and get a link to hand over
+  interaction wait    Block until the phone submits, then print the answer as JSON — a timeout is not an error
+  interaction status  List open questions: stage, revision, how much is filled in so far
+  interaction close   End a question now rather than at its TTL, and drop its answer
+
+Run `mp interaction <subcommand> --help` for one subcommand's options.
+
+$ mp.cmd status --help
+mp status — List active previews and how long each has left
+
+usage: mp status [options]
+
+options:
+  --json  Print a machine-readable JSON array on stdout instead of prose
+  --help  Show this help
+
+$ mp.cmd stop --help
+mp stop — Tear a preview down and make sure nothing is left running
+
+usage: mp stop [options]
+
+options:
+  --port <n>  Which preview to stop (default: the only active one)
+  --all       Stop every preview, including stale and unreadable slots
+  --help      Show this help
+
+$ mp.cmd secret ask --help
+mp secret ask — Send the phone a form for credentials the AI may use but never see
+
+usage: mp secret ask [options]
+
+options:
+  --purpose <text>       One line shown at the top of the form: what these values are for
+  --field <NAME[:kind]>  A field to collect. kind is secret (default, masked, redacted from output), text (visible, not redacted — a bucket name) or multiline (a textarea — a PEM key) (repeatable)
+  --use <command>        A command the AI intends to run with the values, e.g. "npm run deploy"; the user ticks each one on the phone (repeatable)
+  --id <id>              Ask an existing slot to approve more --use commands instead of opening a new one; the values are not re-entered
+  --ttl <min>            Minutes the values stay in memory once they arrive (1–1440) (default 120)
+  --form-ttl <min>       Minutes the form link stays open (1–60) (default 30)
+  --json                 Print one machine-readable JSON object on stdout instead of prose
+  --help                 Show this help
+
+$ mp.cmd secret wait --help
+mp secret wait — Block until the phone has submitted the form, then report names and fingerprints — never values
+
+usage: mp secret wait [options]
+
+options:
+  --id <id>        Which slot to wait on (default: the only active one)
+  --timeout <sec>  Seconds to wait before giving up (the link stays open regardless) (default 540)
+  --json           Print one machine-readable JSON object on stdout instead of prose
+  --help           Show this help
+
+$ mp.cmd secret run --help
+mp secret run — Run one of the approved commands with the values in its environment; output comes back redacted
+
+usage: mp secret run [options] -- <command…>
+
+options:
+  --id <id>    Which slot to run with (default: the only active one)
+  --cwd <dir>  Working directory for the command (default: the current one)
+  --help       Show this help
+
+$ mp.cmd secret forget --help
+mp secret forget — Wipe a slot from memory now rather than at its TTL
+
+usage: mp secret forget [options]
+
+options:
+  --id <id>  Which slot to forget (default: the only active one)
+  --all      Forget every slot, including stale ones
+  --help     Show this help
+
+$ mp.cmd interaction ask --help
+mp interaction ask — Put a question on the phone as a page, and get a link to hand over
+
+usage: mp interaction ask [options]
+
+options:
+  --html <file>     The page to serve — one self-contained HTML file, no external resources; it is checked before the link is issued
+  --purpose <text>  One line for `mp interaction status`: what this asks the user to decide
+  --id <id>         Replace an open question's page with a new one (a re-ask after "the premise is wrong"); bumps its revision
+  --ttl <min>       Minutes the answer stays readable after it arrives (1–1440) (default 120)
+  --form-ttl <min>  Minutes the link stays open (1–60) (default 30)
+  --json            Print one machine-readable JSON object on stdout instead of prose
+  --help            Show this help
+
+$ mp.cmd interaction wait --help
+mp interaction wait — Block until the phone submits, then print the answer as JSON — a timeout is not an error
+
+usage: mp interaction wait [options]
+
+options:
+  --id <id>        Which question to wait on (default: the only open one)
+  --timeout <sec>  Seconds to wait before reporting "still waiting" and exiting 0 (the link stays open) (default 540)
+  --json           Print one machine-readable JSON object on stdout instead of prose
+  --help           Show this help
+
+$ mp.cmd interaction close --help
+mp interaction close — End a question now rather than at its TTL, and drop its answer
+
+usage: mp interaction close [options]
+
+options:
+  --id <id>  Which question to close (default: the only open one)
+  --all      Close every question, including stale ones
+  --help     Show this help

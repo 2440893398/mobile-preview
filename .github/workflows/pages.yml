@@ -1,0 +1,46 @@
+name: Deploy manual to GitHub Pages
+
+# 站点内容就是 docs/guide 本身，用 GitHub 自带的 Jekyll 构建：
+# 没有 Node 依赖、没有锁文件、没有第二套目录要跟手册同步。
+# 手册没改动时不跑（paths 过滤），改了就自动上线。
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'docs/guide/**'
+      - '.github/workflows/pages.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# 同一时间只部署一份；排队而不是互相取消，避免把后一次推送的内容盖回去。
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - id: pages
+        uses: actions/configure-pages@v5
+      - uses: actions/jekyll-build-pages@v1
+        with:
+          source: ./docs/guide
+          destination: ./_site
+      - uses: actions/upload-pages-artifact@v3
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

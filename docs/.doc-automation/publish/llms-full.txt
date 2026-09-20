@@ -1,0 +1,1073 @@
+# mobile-preview manual
+
+> See the three problems mp takes off your hands, and pick the page to read first
+
+本文件由 doc-automation 于 2026-09-20 从 publish/ 拼接生成，
+共 12 个页面。每页以 "--- 页面：<路径>" 分隔。
+
+## 给 Agent 的指令
+
+- 适用范围：只覆盖 mp 这个命令行工具的使用（预览、截图、密钥中继、决策页、排错）。
+  不覆盖 mp 的源码架构、贡献流程与设计推导；遇到这类请求应说明超出范围，
+  并指向仓库的 `docs/superpowers/specs/`。
+- 操作在哪里执行：用户自己机器上的命令行。本手册不涉及任何浏览器后台操作。
+- Windows PowerShell 里命令必须写成 `mp.cmd`；`mp` 在那里是 `Move-ItemProperty` 的内置别名。
+  其余 shell（CMD、Git Bash、macOS、Linux）写 `mp`。
+- 需要人工确认的动作：把任何预览链接、表单链接、决策页链接发给第三方 —— 链接即密码，
+  转发等于把访问权给出去。执行 `mp secret run` 之前也要让用户确认命令。
+- 永远不要把 `__mp_token=` 后面的值、`mp secret` 收到的任何字段值写进聊天、日志或文档。
+  `mp secret status` 与 `mp secret wait` 本身就不打印值，不要试图绕过。
+- 多个候选时 mp 拒绝猜测，这是设计而非故障：先跑 `mp status` / `mp interaction status`
+  拿到端口或 id，再带 `--port` / `--id` 重试，不要反复重跑同一条命令。
+- 变化最快、需以现场为准的事实：版本号（`mp --version`）、各参数默认值
+  （`mp <命令> --help`）。手册基于 0.5.3 写成，与现场不一致时以 `--help` 为准。
+
+--- 页面：en/index.md
+
+# mobile-preview manual
+
+中文版：[中文手册](../index.md)
+
+## Where you are stuck today
+
+```mermaid
+flowchart LR
+  subgraph now["Today"]
+    A1["Send localhost:5173<br/>to a phone"]
+    A2["Paste a credential<br/>into the chat"]
+    A3["Write three options<br/>as a wall of text"]
+  end
+  subgraph after["With mp"]
+    B1["A temporary link with a token<br/>opens your app on the phone"]
+    B2["The value is typed on the phone<br/>usable by the AI, never readable"]
+    B3["One page of tappable choices<br/>the answer comes back as JSON"]
+  end
+  A1 -->|"on their device<br/>localhost means themselves"| B1
+  A2 -->|"chat history and logs<br/>each keep a copy"| B2
+  A3 -->|"they scroll three screens<br/>then type a reply"| B3
+```
+
+## One job, one command
+
+| What you want | Command | What you get |
+|---|---|---|
+| Open the local app on a phone | `mp start` | An HTTPS link carrying a token, closing itself after 30 minutes by default |
+| Let the AI use a credential it cannot read | `mp secret ask` | The value is typed on the phone, injected into the command, scrubbed from output (evidence E005) |
+| Ask a question without a wall of text | `mp interaction ask` | A tappable page on the phone; the answer returns as JSON |
+| Let the AI reach for these on its own | Install the plugin | No command typing in a remote session (evidence E001) |
+
+## What it looks like on the phone
+
+Evidence E010:
+
+![The demo app at phone size: heading "演示应用", subtitle "跑在本机 127.0.0.1:4173", four order rows, and a green button](../assets/screenshots/phone-preview-demo.png)
+
+Legend: this image is a real artifact produced by `mp capture`, not a mockup.
+
+## What to read, in what order
+
+| Where you are | Read this |
+|---|---|
+| Nothing installed yet | [Quickstart](./quickstart.md) |
+| Installed, want daily use | [Show the app on a phone](./workflows/preview-and-capture.md) |
+| The AI needs your credential, or needs you to choose | [Credentials and decisions](./workflows/secrets-and-decisions.md) |
+| Looking up a flag | [Command reference](./reference/commands.md) |
+| Something broke | [Troubleshooting](./troubleshooting.md) |
+
+## Two things to know first
+
+**In Windows PowerShell, write `mp.cmd`.** PowerShell takes `mp` as an alias for the built-in
+`Move-ItemProperty`, so a bare `mp` runs something unrelated. CMD, Git Bash, macOS and Linux
+take `mp` directly; this manual writes `mp` throughout, and PowerShell readers substitute.
+
+**The link is the password.** Every link carries a 32-byte token, and without it every request
+gets a 404 (evidence E007). Forwarding the link hands over the preview; there is no second
+login.
+
+## Scope
+
+**Covered**: installation and self-check, previews, screenshot and video diagnostics, the
+credential relay, decision pages, every command flag, troubleshooting.
+
+**Not covered**: source architecture, contribution flow and design rationale, which live in
+`README.md` and `docs/superpowers/specs/`; the plugin hook configuration, which lives in
+`plugins/mobile-preview/README.md`.
+
+This manual is written against 0.5.3. Run `mp --version` for the one you have (evidence E002).
+
+--- 页面：index.md
+
+# mobile-preview 操作手册
+
+English version: [English manual](./en/index.md)
+
+## 你现在是怎么卡住的
+
+```mermaid
+flowchart LR
+  subgraph now["现在"]
+    A1["把 localhost:5173<br/>发给手机"]
+    A2["把密钥贴进聊天框"]
+    A3["三个方案写成一屏字<br/>发出去等回话"]
+  end
+  subgraph after["装上 mp 之后"]
+    B1["一条带口令的临时链接<br/>手机点开就是你的应用"]
+    B2["值只在手机上填<br/>AI 用得上，读不到"]
+    B3["手机上一页选择题<br/>答案以 JSON 回来"]
+  end
+  A1 -->|"手机上的 localhost<br/>指的是手机自己"| B1
+  A2 -->|"聊天记录、日志<br/>各留了一份"| B2
+  A3 -->|"对方滑三屏<br/>再打字回你"| B3
+```
+
+## 一件事对一条命令
+
+| 你想做的 | 命令 | 拿到什么 |
+|---|---|---|
+| 让手机打开本机应用 | `mp start` | 一条带口令的 HTTPS 链接，默认 30 分钟后自动关闭 |
+| 让 AI 用你的密钥但读不到 | `mp secret ask` | 值在手机上填，注入命令环境，输出脱敏（证据 E005） |
+| 让一个选择题别变成一屏字 | `mp interaction ask` | 手机上一页可点的页面，答案以 JSON 回到 AI 手里 |
+| 让 AI 自己想起来用这些 | 装插件 | 远程会话里不必你每次手敲（证据 E001） |
+
+## 手机上看到的样子
+
+证据 E010：
+
+![手机尺寸下的演示应用，标题「演示应用」、副标题「跑在本机 127.0.0.1:4173」、订单列表四行与绿色「点我」按钮](./assets/screenshots/phone-preview-demo.png)
+
+图例：这张图是 `mp capture` 拍下来的真实产物，不是示意图。
+
+## 按什么顺序读
+
+| 你的状态 | 读这页 |
+|---|---|
+| 还没装 | [快速上手](./quickstart.md) |
+| 装好了，想天天用 | [把应用开给手机看](./workflows/preview-and-capture.md) |
+| AI 要用你的密钥，或者要你做选择 | [交出密钥与做选择](./workflows/secrets-and-decisions.md) |
+| 查参数 | [命令速查](./reference/commands.md) |
+| 出问题了 | [排错](./troubleshooting.md) |
+
+## 两件必须先知道的事
+
+**在 Windows PowerShell 里命令要写成 `mp.cmd`。** PowerShell 把 `mp` 占用为内置命令
+`Move-ItemProperty` 的别名，直接敲 `mp` 会执行完全无关的东西。CMD、Git Bash、macOS 与
+Linux 直接写 `mp`；本手册统一写 `mp`，PowerShell 读者自行替换。
+
+**链接即密码。** 每条链接里带一个 32 字节口令，没有它一律返回 404（证据 E007）。
+把链接转发给谁，就等于把这个预览给了谁，它没有二次登录。
+
+## 范围边界
+
+**覆盖**：安装与自检、预览、截图与录像诊断、密钥中继、决策页、全部命令参数、排错。
+
+**不覆盖**：源码架构、贡献流程、设计推导，这些在 `README.md` 与 `docs/superpowers/specs/`；
+插件 hooks 的配置细节在 `plugins/mobile-preview/README.md`。
+
+本手册基于 0.5.3 写成。你装的是哪一版，用 `mp --version` 查（证据 E002）。
+
+--- 页面：en/quickstart.md
+
+# Quickstart
+
+```mermaid
+flowchart LR
+  A["1 install<br/>npm install<br/>npm link"] --> B["2 check<br/>mp doctor"] --> C["3 open<br/>mp start --port"] --> D["4 on the phone<br/>the link is the password"] --> E["5 close<br/>mp stop"]
+```
+
+Five steps, about ten minutes, ending in a link that opens on your phone.
+
+## Prerequisites
+
+- Node.js 20 or newer; `node -v` prints a version
+- A web project you can run locally, and you know the port it listens on
+- Windows PowerShell users: write every `mp` below as `mp.cmd`
+
+## Installing mp
+
+Start: a terminal you can type commands into, any working directory.
+
+1. Fetch the code: `git clone https://github.com/2440893398/mobile-preview.git`,
+   then `cd mobile-preview`.
+2. Install dependencies: `npm install`.
+3. Install the browser used for screenshots: `npx playwright install chromium`.
+4. Install the tunnel client: `winget install --id Cloudflare.cloudflared` on Windows,
+   `brew install cloudflared` on macOS.
+5. Put `mp` on your PATH: `npm link`.
+6. Close this terminal, **open a new one**, and run `mp doctor`.
+   - Expected: four lines print `ok`, and the last line reads
+     `Everything mp needs is present.` (evidence E008).
+
+The new terminal matters: a shell fixes its executable search path at startup, so the old
+window cannot see the `mp` you just linked.
+
+## Running your first preview
+
+Start: `mp doctor` reports `ok` four times, and your app is already running locally
+(say, on port 4173).
+
+1. Run `mp start --port 4173`, replacing 4173 with the port your app actually listens on.
+   - Expected: it prints `... starting the preview daemon`, then
+     `... asking trycloudflare.com for a quick tunnel`; the link appears only once the edge
+     connection is up (evidence E009).
+2. Send the printed link to your phone and open it.
+   - Expected: the phone browser shows the app running on your machine.
+3. Run `mp stop` when you are done.
+   - Expected: `stopped port 4173 (2 process tree(s) terminated)`, and refreshing on the
+     phone no longer loads (evidence E009).
+
+Skipping `mp stop` is fine too: a preview ends itself after 30 minutes by default.
+
+## Verify
+
+Run `mp status`. It worked when `mp start` leaves a slot for that port, with the link, the
+remaining time, two process ids and the tunnel log path, and when `mp stop` removes that slot
+from the list.
+
+A preview has no window. Nothing appears on the desktop, and `mp status` is the only place
+it is visible.
+
+## If it fails
+
+Run `mp doctor` first. It tells apart "not installed", "installed but this shell cannot see
+it", and "only ffmpeg is missing, which affects `--video` alone", and prints the command that
+fixes each case.
+
+When `mp start` fails after waiting, the full log is at
+`%LOCALAPPDATA%\mobile-preview\previews\<port>.cloudflared.log`, with each retry separated by
+`--- attempt N/M ---`.
+
+Symptom-by-symptom fixes live in [Troubleshooting](./troubleshooting.md).
+
+--- 页面：quickstart.md
+
+# 快速上手
+
+```mermaid
+flowchart LR
+  A["1 装<br/>npm install<br/>npm link"] --> B["2 验<br/>mp doctor"] --> C["3 开<br/>mp start --port"] --> D["4 手机打开<br/>链接即密码"] --> E["5 关<br/>mp stop"]
+```
+
+五步，约十分钟，终点是一条手机上能打开的链接。
+
+## 前置条件
+
+- 已安装 Node.js 20 或更高版本，`node -v` 能打印版本号
+- 本机有一个能跑起来的网页项目，并且知道它监听的端口
+- Windows PowerShell 用户：下面所有 `mp` 都写成 `mp.cmd`
+
+## 安装 mp 的步骤
+
+起点：一个可以执行命令的终端窗口，当前目录随意。
+
+1. 取回代码：`git clone https://github.com/2440893398/mobile-preview.git`，
+   然后 `cd mobile-preview`。
+2. 装依赖：`npm install`。
+3. 装截图用的浏览器：`npx playwright install chromium`。
+4. 装隧道程序：Windows 上 `winget install --id Cloudflare.cloudflared`，
+   macOS 上 `brew install cloudflared`。
+5. 把 `mp` 装到全局：`npm link`。
+6. 关掉当前终端，**开一个新的**，执行 `mp doctor`。
+   - 预期：四项都打印 `ok`，末尾一行 `Everything mp needs is present.`（证据 E008）。
+
+新终端这一步不能省：系统的可执行文件搜索路径在终端启动时就固定了，旧窗口看不见刚装好的
+`mp`。
+
+## 跑通第一次预览的步骤
+
+起点：`mp doctor` 四项全 `ok`，你的应用已在本机跑起来（例如监听 4173）。
+
+1. 执行 `mp start --port 4173`，把 4173 换成你的应用真实监听的端口。
+   - 预期：依次打印 `... starting the preview daemon` 与
+     `... asking trycloudflare.com for a quick tunnel`，只有真正连上才打印链接（证据 E009）。
+2. 把打印出来的那条链接发到手机上打开。
+   - 预期：手机浏览器里出现的就是你本机跑着的那个应用。
+3. 看完后执行 `mp stop`。
+   - 预期：`stopped port 4173 (2 process tree(s) terminated)`；手机上再刷新就打不开了
+     （证据 E009）。
+
+不执行 `mp stop` 也可以，预览默认 30 分钟后自动结束。
+
+## 验证
+
+执行 `mp status`。跑通的标志是：`mp start` 之后它列出该端口的槽位，带链接、剩余时间、
+两个进程号与隧道日志路径；`mp stop` 之后该槽位从列表消失。
+
+预览没有窗口，桌面上不会出现任何东西，`mp status` 是唯一能看到它的地方。
+
+## 失败时
+
+先执行 `mp doctor`，它会分别告诉你是没装、还是装了但当前终端看不见、还是只缺录像用的
+ffmpeg，并直接给出修复命令。
+
+若 `mp start` 等待后失败，完整日志在
+`%LOCALAPPDATA%\mobile-preview\previews\<端口>.cloudflared.log`，每次重试以
+`--- attempt N/M ---` 分隔。
+
+按症状查处置见[排错](./troubleshooting.md)。
+
+--- 页面：en/reference/commands.md
+
+# Command reference
+
+This page is transcribed from `mp --help` and each subcommand's `--help` (evidence E012);
+defaults come from `src/usage.js` (evidence E002). In Windows PowerShell write every `mp`
+as `mp.cmd`.
+
+Global: `-h, --help` shows help, `mp <command> --help` shows one command's options, and
+`-v, --version` prints the version. Unknown options are refused by name rather than swallowed.
+
+## All commands
+
+| Command | What it does | Flags you reach for |
+|---|---|---|
+| `mp start` | Expose a local port as a temporary authenticated public link | `--port` `--ttl` `--dev` |
+| `mp capture` | Screenshot at phone size and report what went wrong on the page | `--port` `--full-page` `--network-idle` |
+| `mp status` | List active previews and how long each has left | `--json` |
+| `mp stop` | Tear a preview down and leave nothing running | `--port` `--all` |
+| `mp doctor` | Check everything mp needs is installed, on PATH and reachable | none |
+| `mp secret ask/wait/run/status/forget` | The phone fills in credentials the AI may use but never read | `--field` `--use` `--id` |
+| `mp interaction ask/wait/status/close` | Put a decision on a page, get the answer as JSON | `--html` `--id` `--timeout` |
+
+## mp start
+
+| Flag | Default | Meaning |
+|---|---|---|
+| `--port <n>` | 5173 | Local port to expose — the one your app already listens on |
+| `--ttl <min>` | 30 | Minutes before the preview self-terminates, 1 to 1440 |
+| `--grace <min>` | same as `--ttl` | Minutes the link stays exchangeable after first use; `0` makes it one-shot |
+| `--dev` | off | Expose a dev server rather than a build, a larger attack surface |
+| `--json` | off | Print one machine-readable JSON object instead of prose |
+
+## mp capture
+
+Usage is `mp capture [url] [options]`; without a url it shoots the preview root.
+
+| Flag | Default | Meaning |
+|---|---|---|
+| `--port <n>` | the only active one | Which preview to capture through |
+| `--device <name>` | iPhone 13 | Playwright device profile, e.g. `"Pixel 7"`, `"iPhone 15 Pro"` |
+| `--steps <file>` | none | ESM file default-exporting `async (page) => {}`, run before the shot |
+| `--video` | off | Record the session as MP4; needs ffmpeg on PATH |
+| `--wait-for <selector>` | none | Wait until this CSS selector is visible |
+| `--wait-ms <n>` | 500 | Extra milliseconds after the page settles |
+| `--network-idle` | off | Wait for the network to fall idle, not just for load |
+| `--full-page` | off | Capture the whole scrollable page, not just the first screen |
+| `--strict` | off | Exit non-zero when the page had console errors or failed requests |
+
+`--json` on `mp status` and `--port` / `--all` on `mp stop` mean the same as above; `--all`
+also stops stale and unreadable slots.
+
+## mp secret
+
+Values exist only in each daemon's memory. `status` and `wait` report names and fingerprints,
+never values.
+
+| Subcommand | Key flags | Default | Meaning |
+|---|---|---|---|
+| `secret ask` | `--purpose <text>` | none | One line atop the form: what these values are for |
+| | `--field <NAME[:kind]>` | kind `secret` | A field to collect, repeatable. `secret` is masked and redacted from output, `text` is visible and not redacted, `multiline` is a textarea |
+| | `--use <command>` | none | A command the AI intends to run with the values, repeatable; you tick each on the phone |
+| | `--id <id>` | none | Ask an existing slot to approve more uses without re-entering values |
+| | `--ttl <min>` | 120 | Minutes the values stay in memory once they arrive, 1 to 1440 |
+| | `--form-ttl <min>` | 30 | Minutes the form link stays open, 1 to 60 |
+| `secret wait` | `--timeout <sec>` | 540 | Seconds before giving up; the link stays open regardless |
+| `secret run` | `--cwd <dir>` | current directory | Working directory. Usage is `mp secret run [options] -- <command…>` |
+| `secret forget` | `--all` | off | Forget every slot, including stale ones |
+
+## mp interaction
+
+| Subcommand | Key flags | Default | Meaning |
+|---|---|---|---|
+| `interaction ask` | `--html <file>` | none | The page to serve: one self-contained HTML file with no external resources, checked before the link is issued |
+| | `--purpose <text>` | none | One line for `mp interaction status` |
+| | `--id <id>` | none | Replace an open question's page, bumping its revision |
+| | `--ttl <min>` | 120 | Minutes the answer stays readable, 1 to 1440 |
+| | `--form-ttl <min>` | 30 | Minutes the link stays open, 1 to 60 |
+| `interaction wait` | `--timeout <sec>` | 540 | On timeout it reports "still waiting" and exits 0; the link stays open |
+| `interaction close` | `--all` | off | Close every question, including stale ones |
+
+## Installing the plugin
+
+To make the AI reach for these commands on its own, install steps and the three hooks are in
+the [plugin readme](https://github.com/2440893398/mobile-preview/blob/main/plugins/mobile-preview/README.md).
+Once installed, phrases like "show me on my phone", "screenshot it" or "send me the link" in a
+remote session trigger it.
+
+> That is a repository URL rather than a relative path on purpose: this page is mirrored into
+> `docs/guide/`, at a different directory depth, so a relative path leaving the manual would
+> break after mirroring.
+
+--- 页面：en/troubleshooting.md
+
+# Troubleshooting
+
+When stuck, run `mp doctor` first. It tells apart "not installed", "installed but this shell
+cannot see it" and "only ffmpeg is missing", and prints the command that fixes each
+(evidence E008).
+
+## The command itself will not run
+
+| Symptom | Cause | Action |
+|---|---|---|
+| Typing `mp` in PowerShell runs something else | `mp` is the built-in alias for `Move-ItemProperty` | Use `mp.cmd`, or `& mp` in a shell with the alias removed |
+| `command not found` | The shell fixed its search path at startup and cannot see a freshly linked command | Close the terminal and open a new one |
+| `mp doctor` reports cloudflared missing | The tunnel client is not installed | `winget install --id Cloudflare.cloudflared` on Windows, `brew install cloudflared` on macOS |
+| `mp capture` reports no browser | Playwright's Chromium is not installed | `npx playwright install chromium` |
+| `--video` produces no MP4 | ffmpeg is not on PATH | Install ffmpeg; without recording you can leave it missing |
+
+## The preview will not come up, or will not open
+
+| Symptom | Cause | Action |
+|---|---|---|
+| Hangs after `asking trycloudflare.com for a quick tunnel`, then fails | No working path to Cloudflare | Read `%LOCALAPPDATA%\mobile-preview\previews\<port>.cloudflared.log`; retries are separated by `--- attempt N/M ---` |
+| The link printed, the phone shows 530 | The tunnel dropped after coming up | Run `mp start` again; mp does not reconnect on its own |
+| The phone shows 404 | The link lost its token, or it expired | Take the current full link from `mp status` and send all of it, not just the domain |
+| Blank on the phone, fine on the desktop | The page hardcodes `http://127.0.0.1` or `http://localhost` for its API, which on a phone means the phone | Use a relative `/api` path so requests travel through the tunnel |
+| Edits do not show on the phone | The tunnel does not forward WebSocket upgrades, so hot reload is dead | Refresh the phone by hand |
+| An SSE page looks broken | Same cause; events pile up until the connection closes | Verify that feature locally, or poll instead inside a preview |
+
+## The command refuses to act
+
+`mp` never guesses between candidates. That is design, not a fault:
+
+```text
+$ mp capture
+several previews are active (ports 4173, 4180). Pass --port to pick one.
+
+$ mp interaction wait --timeout 5
+several interactions are open (i-2b944d, i-f1ed0b); pass --id.
+```
+
+Both are real output (evidence E009, E011). Pass `--port <n>` or `--id <id>` explicitly; run
+`mp status` or `mp interaction status` first when you do not know the candidates.
+
+When `mp interaction ask` refuses to issue a link, it lists each rule the page fails, such as
+`nothing carries data-mp-submit, so the page has no way to submit`. Fix and rerun; a failing
+page never goes live.
+
+## The phone submitted and the page says it did not go through
+
+Read which of the three the page is saying (the page's own text is Chinese):
+
+- **"正在自动重试（n/5）" — retrying.** The tunnel is most likely reconnecting. Leave it alone
+  and do not reload: the submission is resent five times over about half a minute, and the
+  receipt appears once one gets through. Nothing that was filled in is lost.
+- **"用下面这段话直接回给 AI" — the retries ran out.** The page has already turned the answer
+  into a block of copyable text starting `【mp interaction 回传 · i-xxxxxx`. Copy it and paste
+  it into the chat; that counts as answering, and no new link is needed.
+- **"这个页面不是最新的了" — the question was asked again.** Go back to the chat for the
+  current link.
+
+To see what actually broke, read that question's tunnel log — `mp interaction status` prints
+the path. `Lost connection with the edge` followed by `Registered tunnel connection` is the
+window the submission fell into (evidence E009).
+
+## You cannot find where the preview is
+
+A preview runs in the background with no window, so nothing appears on the desktop.
+`mp status` is the only place it is visible, giving the link, the remaining time, the daemon
+and cloudflared process ids, and that port's tunnel log path (evidence E009; where each
+artifact lands is in evidence E004).
+
+Killing the daemon outright leaves an orphan cloudflared. `mp status` and `mp stop` reclaim
+those before they report, and `mp stop --all` clears even unreadable slots.
+
+## Networks in mainland China
+
+`trycloudflare.com` is reachable directly but unstable there, and the first tunnel sometimes
+needs a few retries. Measurements and advice are in the repository `README.md`, under
+Running from mainland China (evidence E001).
+
+## Still stuck
+
+Open an issue with three things: the full output of `mp doctor`, the full output of
+`mp status`, and the last 50 lines of the `.cloudflared.log` for that port.
+
+--- 页面：en/workflows/preview-and-capture.md
+
+# Show the app on a phone, and let the AI look at it
+
+## Prerequisites
+
+- [Quickstart](../quickstart.md) done, `mp doctor` reports `ok` four times
+- Your app is running locally and you know its port
+
+```mermaid
+flowchart TD
+  A[app listening locally] --> B{what is exposed}
+  B -->|build output| C[mp start --port N]
+  B -->|dev server| D[mp start --port N --dev]
+  C --> E[send the link to the phone]
+  D --> E
+  E --> F{who looks}
+  F -->|you| G[open in the phone browser]
+  F -->|the AI| H[mp capture]
+  G --> I[mp stop]
+  H --> I
+```
+
+## Opening a preview
+
+Start: a terminal in any directory, with your app listening on a local port.
+
+1. Run `mp start --port <your port>`.
+2. Add `--dev` when what you expose is a dev server (Vite, Webpack dev server) rather than a
+   build.
+3. Add `--ttl <minutes>` for a longer or shorter lifetime; the range is 1 to 1440.
+4. Send the printed link to your phone and open it.
+   - Expected: the command prints
+     `preview: https://….trycloudflare.com/?__mp_token=…` and `expires in 30 min`, and the
+     phone shows the same page as the desktop (evidence E009).
+
+This is what it looks like on the phone:
+
+![The demo app at phone size: heading "演示应用", subtitle "跑在本机 127.0.0.1:4173", four order rows, and a green button](../../assets/screenshots/phone-preview-demo.png)
+
+## Letting the AI look at the page
+
+Start: one preview is running and `mp status` lists it.
+
+1. Run `mp capture`. With a single preview running you need no port.
+2. Add `--network-idle` for API-driven single-page apps, so the shot waits for the network to
+   settle.
+3. Add `--full-page` for the whole scrollable page rather than the first screen.
+4. Add `--video` to record instead of shoot; it needs ffmpeg on PATH.
+   - Expected: one line of `![shot-N](https://…/_a/…/shot-N.png)`, followed by
+     `Page loaded clean: no console errors, no failed requests.` or a list of what the page
+     reported (evidence E009).
+
+The output is Markdown image syntax, so pasting it to an AI is enough for it to see the shot.
+Console errors and failed requests come back in the same report, which is the whole point of
+handing diagnosis to the AI.
+
+## Running several previews at once
+
+One port takes one slot, so a front end and an admin panel can each have their own. With a
+single preview running, `mp capture` and `mp stop` default to it; past one, they refuse to
+guess:
+
+```text
+$ mp capture
+several previews are active (ports 4173, 4180). Pass --port to pick one.
+```
+
+Pass `--port` explicitly at that point (evidence E009).
+
+## Two known limits with dev servers
+
+The tunnel does not forward WebSocket upgrades, so Vite hot reload does not work through a
+preview. Edit your code, then refresh the phone by hand.
+
+For the same reason a page relying on SSE looks broken through a preview: events pile up until
+the connection closes.
+
+## Verify
+
+Run `mp status`: a working preview shows its slot, link and remaining time; after `mp stop`
+the slot is gone from the list and the phone no longer loads the page.
+
+## If it fails
+
+When the link never appears or the attempt fails, read the failure class the command prints,
+then `%LOCALAPPDATA%\mobile-preview\previews\<port>.cloudflared.log`.
+
+A 530 on the phone means the tunnel dropped after coming up; run `mp start` again, as mp does
+not reconnect on its own. A 404 means the link lost its token or expired; take the current one
+from `mp status`.
+
+More symptoms in [Troubleshooting](../troubleshooting.md).
+
+--- 页面：en/workflows/secrets-and-decisions.md
+
+# Hand over credentials and decide on the phone
+
+Both problems share a root: the AI needs input from you, and a chat box is the worst place to
+put it. Passwords end up in the transcript, and a choice turns into a screen of prose.
+
+## Prerequisites
+
+- `mp` installed, `mp doctor` reports `ok` four times
+- Your phone can open `trycloudflare.com` links
+
+```mermaid
+flowchart LR
+  A[AI needs a credential] -->|mp secret ask| B[a form on the phone]
+  B -->|you fill it in| C["values live in daemon memory only"]
+  C -->|mp secret run| D["the command runs with them<br/>output comes back redacted"]
+  C -.->|AI cannot read them| E["mp secret status<br/>names and fingerprints only"]
+```
+
+## Handing a credential to the AI
+
+Start: a terminal in your project, with the AI having told you which command it wants to run.
+
+1. Open a form:
+   `mp secret ask --purpose "deploy needs cloud AccessKey" --field AK --field SK --use "npm run deploy"`.
+2. Send the printed link to your phone and fill it in. Every command declared with `--use` is
+   ticked off by you on the phone.
+3. Run `mp secret wait` until the phone submits.
+4. Run `mp secret run -- npm run deploy`. The values arrive as environment variables and the
+   output comes back redacted.
+5. Run `mp secret forget --all` when you are done.
+   - Expected: it prints `forgot 1 secret slot(s)` and the values leave memory (evidence E011).
+
+`mp secret status` only ever lists field names, approved uses and remaining time — **never
+values**. Values stay in memory for 120 minutes by default, and the form link stays open for 30.
+
+## Turning a choice into a page
+
+Start: a decision that is yours to make, with more than two options or something to compare.
+
+1. Write a self-contained HTML file: one file, no external resources, no `<form action>`.
+2. Give each control a `name` and the submit button `data-mp-submit`. Add a second button
+   carrying `data-mp-disposition="needs_clarification"` so you can answer that the question
+   itself is wrong.
+3. Run `mp interaction ask --purpose "which environment" --html ask-env.html`.
+4. Send the link to your phone and submit your choice.
+5. Run `mp interaction wait` to collect the answer, printed as JSON.
+   - Expected: before the phone submits it prints
+     `i-xxxxxx: still waiting — the link is open for 30 more min.` and exits 0; a timeout is
+     not a failure (evidence E011).
+
+The page is checked before any link is issued, and a page that fails is refused:
+
+```text
+$ mp interaction ask --purpose "which environment" --html ask-env.html
+ask-env.html does not meet the interaction page contract:
+  - nothing carries `data-mp-submit`, so the page has no way to submit
+```
+
+That refusal is real output (evidence E011). The full page contract is in
+`docs/superpowers/specs/2026-09-16-interaction-page-contract.md`.
+
+## When the phone cannot submit
+
+Tunnels drop. cloudflared loses the edge and re-registers twenty-odd seconds later, and a
+submission that lands in that window never reaches this machine: what comes back is
+Cloudflare's own error page rather than this machine's JSON. The page used to say only "that
+did not go through, try again" — while the answer was still on the phone's screen and the only
+way forward was to ask for a new link and fill the whole page in again.
+
+There are now two fallbacks, both in the page, and neither needs anything from you or from the
+person holding the phone:
+
+- **The page retries itself.** A submission that did not arrive is resent five times over
+   about half a minute (1.2s, 2.5s, 5s, 10s, 18s). An answer is deduplicated by its submission
+   id, so the attempt that gets through after a reconnect comes back with the same receipt
+   rather than filing a second answer, and an answered link is held open a little longer for
+   exactly these late retries. Across a twenty-second outage the phone sees "retrying", then
+   the receipt.
+- **Handing the answer back as text.** When the retries run out, or this machine says outright
+   that it will not take the submission, the page turns the answer into something pasteable,
+   with a copy button:
+
+   ```text
+   【mp interaction 回传 · i-20387a · 第 1 版】
+   手机上没能把答案交回你的机器。下面就是我的回答，按它继续，不用再发新链接。
+
+   - 文档形态：整套镜像（mirror）
+   - 备注：先做中文
+
+   mp-answer: {"id":"i-20387a","revision":1,"disposition":"answered","reason":null,"answers":{"doc":"mirror","note":"先做中文"}}
+
+   收到后收个尾：mp interaction close --id i-20387a
+   ```
+
+   (The block is Chinese, like every other phone-facing string in this tool.) Pasting it
+   into the chat counts as answering the page. The first lines are for a person to
+   read, the `mp-answer:` line is for the agent to parse. An agent that receives one acts on it
+   and runs `mp interaction close --id <id>` to tidy up; it should not send a new link and make
+   someone fill the same page in twice.
+
+A page can put its own button on this: `MP.handoff()` returns the text, `MP.rescue()` opens the
+panel.
+
+## When several are open at once
+
+`secret` and `interaction` both take a slot keyed by a random id. With one slot left open,
+`wait` / `forget` / `close` need no `--id`; past one they refuse to guess and print
+`several interactions are open (i-2b944d, i-f1ed0b); pass --id.`
+
+## Verify
+
+`mp secret status` lists slots, field names and remaining time and contains no values.
+`mp interaction status` lists open questions, their stage and how much is filled in. Both
+lists are empty after `forget --all` and `close --all`.
+
+## If it fails
+
+When the link never comes out, the tunnel is the usual cause rather than the command; the fix
+is the same as for previews, see [Troubleshooting](../troubleshooting.md).
+
+When a page is refused, the command lists each failing rule. Fix them and run it again —
+nothing goes live, so no half-built link escapes.
+
+--- 页面：reference/commands.md
+
+# 命令速查
+
+本页逐字对照 `mp --help` 与各子命令的 `--help` 原文生成（证据 E012），默认值取自
+`src/usage.js`（证据 E002）。Windows PowerShell 里所有 `mp` 写成 `mp.cmd`。
+
+全局：`-h, --help` 显示帮助，`mp <命令> --help` 显示单条命令的选项；
+`-v, --version` 打印版本号。未知选项会被按名字拒绝，不会被悄悄忽略。
+
+## 命令总览
+
+| 命令 | 作用 | 最常用的参数 |
+|---|---|---|
+| `mp start` | 把本地端口开成临时的带口令公网链接 | `--port` `--ttl` `--dev` |
+| `mp capture` | 按手机尺寸截图，并报告页面上出了什么错 | `--port` `--full-page` `--network-idle` |
+| `mp status` | 列出活跃预览与各自剩余时间 | `--json` |
+| `mp stop` | 拆掉预览，并确保没有残留进程 | `--port` `--all` |
+| `mp doctor` | 检查 mp 需要的东西是否都已安装、在 PATH 上、可达 | 无 |
+| `mp secret ask/wait/run/status/forget` | 手机填凭据，AI 可用但读不到 | `--field` `--use` `--id` |
+| `mp interaction ask/wait/status/close` | 把一个决定做成页面，答案以 JSON 回来 | `--html` `--id` `--timeout` |
+
+## mp start
+
+| 参数 | 默认 | 说明 |
+|---|---|---|
+| `--port <n>` | 5173 | 要暴露的本地端口，即你的应用已经监听的那个 |
+| `--ttl <min>` | 30 | 预览自行终止前的分钟数，取值 1 到 1440 |
+| `--grace <min>` | 与 `--ttl` 相同 | 链接首次使用后仍可换取会话的分钟数；`0` 为一次性 |
+| `--dev` | 关闭 | 暴露开发服务器而非构建产物，攻击面更大 |
+| `--json` | 关闭 | 在标准输出打印一个机器可读的 JSON 对象，而非人读文本 |
+
+## mp capture
+
+用法是 `mp capture [url] [options]`，不带 url 时拍预览首页。
+
+| 参数 | 默认 | 说明 |
+|---|---|---|
+| `--port <n>` | 唯一活跃的那条 | 通过哪条预览去拍 |
+| `--device <name>` | iPhone 13 | Playwright 设备档案，例如 `"Pixel 7"`、`"iPhone 15 Pro"` |
+| `--steps <file>` | 无 | 默认导出 `async (page) => {}` 的 ESM 文件，截图前执行 |
+| `--video` | 关闭 | 把过程录成 MP4，需要 ffmpeg 在 PATH 上 |
+| `--wait-for <selector>` | 无 | 等到该 CSS 选择器可见再拍 |
+| `--wait-ms <n>` | 500 | 页面稳定后额外等待的毫秒数 |
+| `--network-idle` | 关闭 | 等网络静默而不只是 load，给 API 驱动的单页应用用 |
+| `--full-page` | 关闭 | 拍整个可滚动页面，而不只是第一屏 |
+| `--strict` | 关闭 | 页面有控制台报错或失败请求时以非零退出码结束 |
+
+`mp status` 的 `--json` 与 `mp stop` 的 `--port` / `--all` 语义同上；`--all` 会把陈旧和
+读不出来的槽位一并停掉。
+
+## mp secret
+
+值只存在于各自守护进程的内存里。`status` 与 `wait` 永远只报字段名与指纹，不报值。
+
+| 子命令 | 关键参数 | 默认 | 说明 |
+|---|---|---|---|
+| `secret ask` | `--purpose <text>` | 无 | 表单顶部的一行说明：这些值拿来干什么 |
+| | `--field <NAME[:kind]>` | kind 为 `secret` | 要收集的字段，可重复。`secret` 掩码且从输出中脱敏，`text` 可见不脱敏，`multiline` 为文本域 |
+| | `--use <command>` | 无 | AI 打算用这些值跑的命令，可重复；由你在手机上逐条勾选 |
+| | `--id <id>` | 无 | 让已有槽位追加批准更多 `--use`，不必重新输入值 |
+| | `--ttl <min>` | 120 | 值到达后在内存中保留的分钟数，取值 1 到 1440 |
+| | `--form-ttl <min>` | 30 | 表单链接开放的分钟数，取值 1 到 60 |
+| `secret wait` | `--timeout <sec>` | 540 | 放弃等待前的秒数；链接不受影响仍然开着 |
+| `secret run` | `--cwd <dir>` | 当前目录 | 命令的工作目录。用法是 `mp secret run [options] -- <命令…>` |
+| `secret forget` | `--all` | 关闭 | 清掉每个槽位，包括陈旧的 |
+
+## mp interaction
+
+| 子命令 | 关键参数 | 默认 | 说明 |
+|---|---|---|---|
+| `interaction ask` | `--html <file>` | 无 | 要发布的页面，单个自包含 HTML，不引外部资源；发链接前先做校验 |
+| | `--purpose <text>` | 无 | 一行说明，供 `mp interaction status` 显示 |
+| | `--id <id>` | 无 | 用新页面替换某个未关闭问题的页面，修订号加一 |
+| | `--ttl <min>` | 120 | 答案到达后可读的分钟数，取值 1 到 1440 |
+| | `--form-ttl <min>` | 30 | 链接开放的分钟数，取值 1 到 60 |
+| `interaction wait` | `--timeout <sec>` | 540 | 超时即报告"仍在等待"并以退出码 0 结束，链接仍开着 |
+| `interaction close` | `--all` | 关闭 | 关掉每个问题，包括陈旧的 |
+
+## 装成插件
+
+让 AI 自己想到用这些命令，而不用你每次手敲，安装步骤与三个 hook 的说明在
+[插件说明](https://github.com/2440893398/mobile-preview/blob/main/plugins/mobile-preview/README.md)。
+装好之后，远程会话里提到「手机上看看」「截图」「把链接发我」这类说法就会自动触发。
+
+> 这里用的是仓库绝对地址而不是相对路径：本页会被镜像到 `docs/guide/` 下，
+> 目录深度和 `publish/` 不同，跨出手册目录的相对路径镜像后会断。
+
+--- 页面：troubleshooting.md
+
+# 排错
+
+卡住时第一件事永远是 `mp doctor`。它会分辨"没装"、"装了但当前终端看不见"、
+"只缺录像用的 ffmpeg"三种情况，并直接给出修复命令（证据 E008）。
+
+## 命令本身跑不起来
+
+| 症状 | 原因 | 处置 |
+|---|---|---|
+| PowerShell 里敲 `mp` 执行了别的东西 | `mp` 是 `Move-ItemProperty` 的内置别名 | 改用 `mp.cmd`；或在去掉别名的 shell 里用 `& mp` |
+| `command not found` / 不是内部或外部命令 | 终端启动时就固定了搜索路径，看不见刚 `npm link` 的命令 | 关掉终端，开一个新的再试 |
+| `mp doctor` 报 cloudflared 缺失 | 隧道程序没装 | Windows `winget install --id Cloudflare.cloudflared`，macOS `brew install cloudflared` |
+| `mp capture` 报浏览器缺失 | Playwright 的 Chromium 没装 | `npx playwright install chromium` |
+| `--video` 不出 MP4 | ffmpeg 不在 PATH 上 | 装 ffmpeg；不录像的话这一项可以一直缺着 |
+
+## 预览开不出来或打不开
+
+| 症状 | 原因 | 处置 |
+|---|---|---|
+| 一直停在 `asking trycloudflare.com for a quick tunnel` 后失败 | 到 Cloudflare 的网络不通 | 读 `%LOCALAPPDATA%\mobile-preview\previews\<端口>.cloudflared.log`，每次重试以 `--- attempt N/M ---` 分隔 |
+| 链接打印出来了，手机打开 530 | 隧道建起来之后掉线 | 重新执行 `mp start`；本工具不做自动重连 |
+| 手机打开 404 | 链接缺了口令，或已过期 | 用 `mp status` 取当前完整链接，整条发送，不要只发域名 |
+| 手机上白屏，电脑上正常 | 页面里写死了 `http://127.0.0.1` 或 `http://localhost` 的接口地址，在手机上指向手机自己 | 改成相对路径 `/api`，让请求走隧道 |
+| 改了代码手机上不更新 | 隧道不转发 WebSocket 升级，热更新不工作 | 在手机上手动刷新 |
+| 依赖 SSE 的页面像是坏了 | 同上，事件堆积到连接关闭才送达 | 预览里改用轮询验证，或只在本机验证该功能 |
+
+## 命令拒绝执行
+
+`mp` 在有多个候选时不会替你猜，这不是故障：
+
+```text
+$ mp capture
+several previews are active (ports 4173, 4180). Pass --port to pick one.
+
+$ mp interaction wait --timeout 5
+several interactions are open (i-2b944d, i-f1ed0b); pass --id.
+```
+
+两条都是真实输出（证据 E009、E011）。处置是显式加 `--port <n>` 或 `--id <id>`；
+不确定有哪些时先跑 `mp status` / `mp interaction status`。
+
+`mp interaction ask` 拒绝出链接时，它会把页面不合规的条目逐条列出来，例如
+`nothing carries data-mp-submit, so the page has no way to submit`。照着改再跑一次即可，
+不合规的页面不会上线。
+
+## 手机上点了提交，页面说没送出去
+
+先看页面在说哪一种：
+
+- **"正在自动重试（n/5）"** —— 隧道多半正在重连，不用管，也不要刷新页面。半分钟内重发
+  五次，成了就出回执；填的内容一直都在。
+- **"用下面这段话直接回给 AI"** —— 重试用完了。页面已经把答案变成一段可复制的文字，
+  开头是 `【mp interaction 回传 · i-xxxxxx`。复制它，粘贴回和 AI 的对话里发出去，这就算
+  答过了，不用重新要链接。
+- **"这个页面不是最新的了"** —— 问题已经被重新问过一遍，回聊天里要最新的那条链接。
+
+想知道当时到底断在哪，看这个问题的隧道日志：`mp interaction status` 会打印路径，
+日志里的 `Lost connection with the edge` 和随后的 `Registered tunnel connection` 就是那段
+空窗（证据 E009）。
+
+## 找不到预览在哪
+
+预览跑在后台，没有窗口，桌面上不会出现任何东西。`mp status` 是唯一能看到它的地方，
+它给出链接、剩余时间、守护进程与 cloudflared 两个进程号，以及该端口的隧道日志路径
+（证据 E009；各产物的落盘位置见证据 E004）。
+
+强杀守护进程会留下孤儿 cloudflared。`mp status` 与 `mp stop` 在报告之前会顺手回收它们，
+`mp stop --all` 连状态异常的槽位一起清掉。
+
+## 国内网络
+
+`trycloudflare.com` 在国内可直连但不稳定，首次建隧道偶尔需要重试几次。
+实测数据与建议见仓库 `README.md` 的 Running from mainland China 一节（证据 E001）。
+
+## 还是不行
+
+带上三样东西提 issue：`mp doctor` 的完整输出、`mp status` 的完整输出、
+以及对应端口的 `.cloudflared.log` 最后 50 行。
+
+--- 页面：workflows/preview-and-capture.md
+
+# 把应用开给手机看，并让 AI 替你看页面
+
+## 前置条件
+
+- 已完成[快速上手](../quickstart.md)，`mp doctor` 四项全 `ok`
+- 目标应用已在本机运行，你知道它监听的端口
+
+```mermaid
+flowchart TD
+  A[应用在本机监听端口] --> B{要暴露的是什么}
+  B -->|构建产物| C[mp start --port N]
+  B -->|开发服务器| D[mp start --port N --dev]
+  C --> E[链接发到手机]
+  D --> E
+  E --> F{谁来看}
+  F -->|你自己| G[手机浏览器打开]
+  F -->|AI| H[mp capture]
+  G --> I[mp stop]
+  H --> I
+```
+
+## 开一条预览的步骤
+
+起点：终端在任意目录，应用已在本机监听端口。
+
+1. 执行 `mp start --port <你的端口>`。
+2. 需要暴露的是开发服务器（Vite、Webpack dev server）而不是构建产物时，加上 `--dev`。
+3. 需要更长或更短的有效期时，加上 `--ttl <分钟>`，取值 1 到 1440。
+4. 把打印出来的链接发到手机打开。
+   - 预期：命令打印 `preview: https://….trycloudflare.com/?__mp_token=…` 与
+     `expires in 30 min`；手机上显示的页面与电脑上一致（证据 E009）。
+
+手机上看到的就是这个样子：
+
+![手机尺寸下的演示应用，标题「演示应用」、副标题「跑在本机 127.0.0.1:4173」、订单列表四行与绿色「点我」按钮](../assets/screenshots/phone-preview-demo.png)
+
+## 让 AI 替你看页面的步骤
+
+起点：一条预览正在跑，`mp status` 能看到它。
+
+1. 执行 `mp capture`。只有一条预览在跑时不必指定端口。
+2. 页面是 API 驱动的单页应用时，加上 `--network-idle`，等网络静默再拍。
+3. 要整页而不只是第一屏时，加上 `--full-page`。
+4. 要录像而不是截图时，加上 `--video`，它需要 ffmpeg 在 PATH 上。
+   - 预期：打印一行 `![shot-N](https://…/_a/…/shot-N.png)`，再打印
+     `Page loaded clean: no console errors, no failed requests.` 或列出页面上的报错
+     （证据 E009）。
+
+打印出来的是 Markdown 图片语法，贴给 AI 它就能直接看图。页面有控制台报错或失败请求时，
+`mp capture` 会一并列出来，这正是"让 AI 替你定位问题"的用法。
+
+## 同时开多个预览
+
+一个端口占一个槽位，前端和后台管理可以各开一条。只有一条预览在跑时，`mp capture` 与
+`mp stop` 默认作用于它；一旦超过一条，这两个命令拒绝猜测：
+
+```text
+$ mp capture
+several previews are active (ports 4173, 4180). Pass --port to pick one.
+```
+
+此时必须显式写 `--port`（证据 E009）。
+
+## 开发服务器的两个已知限制
+
+隧道不转发 WebSocket 升级，所以 Vite 的热更新在预览里不工作。改完代码，在手机上手动
+刷新页面即可看到新内容。
+
+同样的原因，依赖 SSE 的页面透过预览会像是坏了：事件会一直堆积到连接关闭才送达。
+
+## 验证
+
+执行 `mp status`：开成功时能看到该端口的槽位、链接与剩余时间；`mp stop` 之后该槽位从
+列表消失，手机上刷新页面打不开。
+
+## 失败时
+
+链接迟迟不出现或最终失败，先看命令给出的失败分类，再读
+`%LOCALAPPDATA%\mobile-preview\previews\<端口>.cloudflared.log`。
+
+手机上打开显示 530，说明隧道建起来之后掉线了，重新执行 `mp start` 即可，本工具不做自动
+重连。显示 404 说明链接缺了口令或已过期，用 `mp status` 取当前链接。
+
+更多症状见[排错](../troubleshooting.md)。
+
+--- 页面：workflows/secrets-and-decisions.md
+
+# 交出密钥与在手机上做选择
+
+两件事同源：AI 需要你输入点什么，而聊天框是最糟的输入位置 —— 密码会留在对话记录里，
+选择题会变成一屏读不完的文字。
+
+## 前置条件
+
+- 已装好 `mp`，`mp doctor` 四项全 `ok`
+- 手机能打开 `trycloudflare.com` 的链接
+
+```mermaid
+flowchart LR
+  A[AI 需要密钥] -->|mp secret ask| B[手机上的表单]
+  B -->|你填写| C["值只在守护进程内存里"]
+  C -->|mp secret run| D["命令带着值执行<br/>输出回来时已脱敏"]
+  C -.->|AI 读不到| E["mp secret status<br/>只给字段名与指纹"]
+```
+
+## 把密钥交给 AI 用的步骤
+
+起点：终端在项目目录，AI 已经告诉你它要跑哪条命令。
+
+1. 开一个表单：
+   `mp secret ask --purpose "部署需要云厂商 AccessKey" --field AK --field SK --use "npm run deploy"`。
+2. 把打印出来的链接发到手机，填好提交。每条 `--use` 声明的命令都要你在手机上逐条勾选批准。
+3. 执行 `mp secret wait`，等手机提交。
+4. 执行 `mp secret run -- npm run deploy`，值以环境变量注入，输出回来时已脱敏。
+5. 用完执行 `mp secret forget --all`。
+   - 预期：打印 `forgot 1 secret slot(s)`，值从内存中消失（证据 E011）。
+
+`mp secret status` 任何时候都只列字段名、已批准的用途与剩余时间，**不打印值**。
+值默认在内存里保留 120 分钟，表单链接默认开放 30 分钟。
+
+## 把选择题变成页面的步骤
+
+起点：有一个需要你拍板的选择，且选项多于两个或需要对比。
+
+1. 写一个自包含的 HTML 文件：单文件、不引任何外部资源、不写 `<form action>`。
+2. 给每个控件加 `name`，给提交按钮加 `data-mp-submit`；再加一个带
+   `data-mp-disposition="needs_clarification"` 的按钮，好让你能回答"问题本身不对"。
+3. 执行 `mp interaction ask --purpose "部署环境二选一" --html ask-env.html`。
+4. 把链接发到手机，做完选择提交。
+5. 执行 `mp interaction wait` 取答案，它以 JSON 打印。
+   - 预期：手机还没提交时打印 `i-xxxxxx: still waiting — the link is open for 30 more min.`
+     并以退出码 0 结束，超时不算失败（证据 E011）。
+
+页面在发链接之前会被检查，不合规直接拒绝出链接：
+
+```text
+$ mp interaction ask --purpose "部署环境二选一" --html ask-env.html
+ask-env.html does not meet the interaction page contract:
+  - nothing carries `data-mp-submit`, so the page has no way to submit
+```
+
+这条拒绝是真实输出（证据 E011）。完整的页面合同见
+`docs/superpowers/specs/2026-09-16-interaction-page-contract.md`。
+
+## 手机上提交不成功时
+
+隧道会断。cloudflared 掉一次线、二十多秒后才重新注册，正好落在这段空窗里的提交就到不了
+这台机器：回来的不是这台机器的 JSON，而是 Cloudflare 自己的一页错误。页面从前只会说一句
+"没有提交成功，再试一次"，而那一页答案还在手机屏幕上，人却只剩"重新要一条链接、再填一遍"
+这一条路。
+
+现在有两道兜底，都在页面里，你和手机那头都不用多做什么：
+
+- **页面自己重试。** 没送到的提交会在半分钟内自动重发五次（1.2s、2.5s、5s、10s、18s）。
+   一次作答按提交编号去重，重连之后送达的那一次拿回的是同一张回执，不会变成第二个答案；
+   答完的链接也会多留一会儿，专门等这种迟到的重试。掉线二十秒这种情况，手机上只会先看到
+   "正在自动重试"，再看到回执。
+- **改用文字回传。** 重试完还是送不出去，或者这台机器明确说不收，页面会把答案变成一段
+   文字，配一个复制按钮：
+
+   ```text
+   【mp interaction 回传 · i-20387a · 第 1 版】
+   手机上没能把答案交回你的机器。下面就是我的回答，按它继续，不用再发新链接。
+
+   - 文档形态：整套镜像（mirror）
+   - 备注：先做中文
+
+   mp-answer: {"id":"i-20387a","revision":1,"disposition":"answered","reason":null,"answers":{"doc":"mirror","note":"先做中文"}}
+
+   收到后收个尾：mp interaction close --id i-20387a
+   ```
+
+   把这段贴回和 AI 的对话里发出去，就等于在这一页上答过了。前几行给人读，`mp-answer:`
+   那一行给 agent 读。Agent 收到后照它继续，并执行 `mp interaction close --id <id>` 收尾，
+   不该再发一条新链接让人重填一遍。
+
+页面也可以自己给这段话加个入口：`MP.handoff()` 返回这段文本，`MP.rescue()` 直接把面板
+打开。
+
+## 同时开着多个时
+
+`secret` 与 `interaction` 都按随机 id 占槽位。只剩一个未关闭时，`wait` / `forget` /
+`close` 不必带 `--id`；有多个时它们同样拒绝猜测，打印
+`several interactions are open (i-2b944d, i-f1ed0b); pass --id.`。
+
+## 验证
+
+`mp secret status` 列出槽位、字段名与剩余时间，且不含任何值；
+`mp interaction status` 列出未关闭的问题、阶段与已填写进度。两个列表在你执行
+`forget --all` / `close --all` 之后都应为空。
+
+## 失败时
+
+链接发不出来，多半卡在隧道而不是命令本身，处置与预览相同，见[排错](../troubleshooting.md)。
+
+页面被拒绝时，命令会把不合规的条目逐条列出来，照着改再跑一次即可 —— 页面不上线，
+不会有半成品链接流出去。
+

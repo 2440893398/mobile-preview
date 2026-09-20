@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="{{ page.lang | default: site.lang | default: 'zh-CN' }}">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#0f172a">
+
+{%- comment -%}
+seo-tag 一口气生成 title、description、canonical、Open Graph、Twitter 卡片与 JSON-LD，
+取的就是每页 frontmatter 里已有的 title 与 description —— 手册页面不必为 SEO 改写。
+{%- endcomment -%}
+{% seo %}
+
+{%- comment -%}
+中英是同一份内容的两个语言版本。没有 hreflang，搜索引擎会把它们当成重复内容，
+只留一个进索引；有了它，中文搜索出中文页，英文搜索出英文页。
+{%- endcomment -%}
+{%- if page.url contains '/en/' -%}
+  {%- assign zh_url = page.url | remove_first: '/en' -%}
+  {%- assign en_url = page.url -%}
+{%- else -%}
+  {%- assign zh_url = page.url -%}
+  {%- assign en_url = page.url | prepend: '/en' -%}
+{%- endif -%}
+<link rel="alternate" hreflang="zh-Hans" href="{{ zh_url | absolute_url }}">
+<link rel="alternate" hreflang="en" href="{{ en_url | absolute_url }}">
+<link rel="alternate" hreflang="x-default" href="{{ zh_url | absolute_url }}">
+
+<style>
+:root{--fg:#0f172a;--muted:#475569;--bg:#fff;--line:#e2e8f0;--soft:#f8fafc;--link:#1d4ed8}
+@media (prefers-color-scheme:dark){
+  :root{--fg:#e2e8f0;--muted:#94a3b8;--bg:#0f172a;--line:#1e293b;--soft:#152033;--link:#93c5fd}
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);
+  font:16px/1.75 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hiragino Sans GB","Microsoft YaHei","Noto Sans SC",sans-serif}
+.wrap{max-width:46rem;margin:0 auto;padding:0 20px 80px}
+nav{border-bottom:1px solid var(--line);margin-bottom:32px}
+nav .wrap{display:flex;gap:16px;align-items:center;padding-top:14px;padding-bottom:14px}
+nav a{color:var(--muted);text-decoration:none;font-size:14px}
+nav a:hover{color:var(--link)}
+nav .home{font-weight:700;color:var(--fg);font-size:15px}
+nav .spacer{flex:1}
+h1{font-size:clamp(28px,6vw,38px);line-height:1.25;margin:0 0 24px}
+h2{font-size:22px;margin:40px 0 12px;padding-top:8px;border-top:1px solid var(--line)}
+h3{font-size:18px;margin:28px 0 8px}
+p,li{overflow-wrap:break-word}
+a{color:var(--link)}
+code{background:var(--soft);border:1px solid var(--line);border-radius:4px;padding:1px 5px;
+  font:13.5px/1.5 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+pre{background:var(--soft);border:1px solid var(--line);border-radius:10px;padding:14px;overflow:auto}
+pre code{background:none;border:0;padding:0}
+table{border-collapse:collapse;width:100%;margin:16px 0;display:block;overflow-x:auto}
+th,td{border:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}
+th{background:var(--soft)}
+blockquote{margin:16px 0;padding:2px 16px;border-left:3px solid var(--line);color:var(--muted)}
+img{max-width:100%;height:auto;border-radius:10px;border:1px solid var(--line)}
+.mermaid{margin:20px 0;text-align:center}
+.mermaid svg{max-width:100%;height:auto}
+footer{margin-top:64px;padding-top:20px;border-top:1px solid var(--line);color:var(--muted);font-size:14px}
+</style>
+</head>
+<body>
+
+<nav><div class="wrap">
+  <a class="home" href="{{ '/' | relative_url }}">{{ site.title }}</a>
+  <span class="spacer"></span>
+  {%- if page.url contains '/en/' %}
+  <a href="{{ zh_url | relative_url }}">中文</a>
+  {%- else %}
+  <a href="{{ en_url | relative_url }}">English</a>
+  {%- endif %}
+  <a href="https://github.com/{{ site.repository }}">GitHub</a>
+</div></nav>
+
+<main class="wrap">
+{{ content }}
+
+<footer>
+  {{ site.title }} &middot;
+  <a href="https://github.com/{{ site.repository }}">源码与 issue</a> &middot;
+  <a href="{{ '/llms.txt' | relative_url }}">llms.txt</a>
+</footer>
+</main>
+
+<script type="module">
+// kramdown 把 ```mermaid 渲染成 <pre><code class="language-mermaid">，
+// 先换成 mermaid 认的容器再渲染。图是这两页的主体，掉了页面就只剩文字。
+const blocks = document.querySelectorAll('pre > code.language-mermaid')
+if (blocks.length) {
+  const { default: mermaid } = await import('https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs')
+  for (const code of blocks) {
+    const box = document.createElement('div')
+    box.className = 'mermaid'
+    box.textContent = code.textContent
+    code.parentElement.replaceWith(box)
+  }
+  const dark = window.matchMedia('(prefers-color-scheme: dark)').matches
+  mermaid.initialize({ startOnLoad: false, theme: dark ? 'dark' : 'default', fontFamily: 'inherit' })
+  await mermaid.run({ querySelector: '.mermaid' })
+}
+</script>
+</body>
+</html>

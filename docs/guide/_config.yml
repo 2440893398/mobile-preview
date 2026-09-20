@@ -1,0 +1,53 @@
+# GitHub Pages 站点配置。站点根目录就是本手册目录（docs/guide），
+# 由 .github/workflows/pages.yml 用 GitHub 自带的 jekyll-build-pages 构建，
+# 不引入 Node 依赖，也不需要在本地跑任何东西。
+#
+# 手册页面本身一个字都不为建站改动：Jekyll 只读 frontmatter 里已有的
+# title / description，其余字段（doc_type、source_evidence 等）原样忽略。
+
+title: mobile-preview
+tagline: 把本机应用、密钥和选择题交到手机上
+description: >-
+  本机跑着的应用怎么在手机上打开、密钥怎么交给 AI 用而不被它读到、
+  一个选择题怎么问才不变成一屏文字。mobile-preview 操作手册，中英双语。
+
+url: https://2440893398.github.io
+baseurl: /mobile-preview
+
+lang: zh-CN
+repository: 2440893398/mobile-preview
+
+# GitHub Pages 自带这三个插件，无需 Gemfile：
+# seo-tag 生成 title/description/canonical/og/twitter 标签，
+# sitemap 生成 /sitemap.xml，relative-links 把 ./quickstart.md 改写成可点的页面地址。
+plugins:
+  - jekyll-seo-tag
+  - jekyll-sitemap
+  - jekyll-relative-links
+
+relative_links:
+  enabled: true
+  collections: false
+
+# 社交卡片统一用那张真实手机截图——它一眼说清这个工具是干什么的。
+defaults:
+  - scope:
+      path: ""
+    values:
+      layout: default
+      image: /mobile-preview/assets/screenshots/phone-preview-demo.png
+  - scope:
+      path: "en"
+    values:
+      lang: en
+
+# 站点不需要的：中间产物已在 docs/.doc-automation（点开头，Jekyll 本就跳过），
+# 这里只排掉手册目录内给 Agent 的指令文件与说明，它们不是页面。
+exclude:
+  - _agent-instructions.md
+  - README.md
+
+markdown: kramdown
+kramdown:
+  input: GFM
+  syntax_highlighter: rouge

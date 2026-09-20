@@ -1,0 +1,53 @@
+# mobile-preview manual
+
+> See the three problems mp takes off your hands, and pick the page to read first
+
+模块：Overview　受众：Developers who have not installed it yet and are deciding whether to　更新：2026-09-20
+
+## 给 Agent 的指令
+
+- 适用范围：只覆盖 mp 这个命令行工具的使用（预览、截图、密钥中继、决策页、排错）。
+  不覆盖 mp 的源码架构、贡献流程与设计推导；遇到这类请求应说明超出范围，
+  并指向仓库的 `docs/superpowers/specs/`。
+- 操作在哪里执行：用户自己机器上的命令行。本手册不涉及任何浏览器后台操作。
+- Windows PowerShell 里命令必须写成 `mp.cmd`；`mp` 在那里是 `Move-ItemProperty` 的内置别名。
+  其余 shell（CMD、Git Bash、macOS、Linux）写 `mp`。
+- 需要人工确认的动作：把任何预览链接、表单链接、决策页链接发给第三方 —— 链接即密码，
+  转发等于把访问权给出去。执行 `mp secret run` 之前也要让用户确认命令。
+- 永远不要把 `__mp_token=` 后面的值、`mp secret` 收到的任何字段值写进聊天、日志或文档。
+  `mp secret status` 与 `mp secret wait` 本身就不打印值，不要试图绕过。
+- 多个候选时 mp 拒绝猜测，这是设计而非故障：先跑 `mp status` / `mp interaction status`
+  拿到端口或 id，再带 `--port` / `--id` 重试，不要反复重跑同一条命令。
+- 变化最快、需以现场为准的事实：版本号（`mp --version`）、各参数默认值
+  （`mp <命令> --help`）。手册基于 0.5.3 写成，与现场不一致时以 `--help` 为准。
+
+## en
+
+- [mobile-preview manual](./en/index.md)：See the three problems mp takes off your hands, and pick the page to read first
+- [Quickstart](./en/quickstart.md)：Install mp from scratch and get a link that opens your local app on a phone
+- [Troubleshooting](./en/troubleshooting.md)：Find the cause of an mp problem from the symptom you see, and the action that fixes it
+
+## 文档
+
+- [mobile-preview 操作手册](./index.md)：看懂 mp 替你解决的三件事，并挑到该读的第一页
+- [快速上手](./quickstart.md)：从零装好 mp，并拿到一条手机上能直接打开的本地应用预览链接
+- [排错](./troubleshooting.md)：按你看到的症状定位 mp 的问题，并拿到对应的处置动作
+
+## en/reference
+
+- [Command reference](./en/reference/commands.md)：Look up every mp flag, its default and its range, plus where to install the plugin
+
+## en/workflows
+
+- [Show the app on a phone, and let the AI look at it](./en/workflows/preview-and-capture.md)：Open a preview link for your local app and use mp capture for phone-sized shots and page errors
+- [Hand over credentials and decide on the phone](./en/workflows/secrets-and-decisions.md)：Let the AI use a credential it can never read, and turn a choice into a phone page that returns JSON
+
+## reference
+
+- [命令速查](./reference/commands.md)：查 mp 每条命令的参数、默认值与取值范围，以及插件安装入口
+
+## workflows
+
+- [把应用开给手机看，并让 AI 替你看页面](./workflows/preview-and-capture.md)：为本机应用开一条预览链接，并用 mp capture 拿到手机尺寸截图与页面错误报告
+- [交出密钥与在手机上做选择](./workflows/secrets-and-decisions.md)：让 AI 用你的密钥却读不到它，以及把一个选择题变成手机上的页面拿回 JSON 答案
+

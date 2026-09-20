@@ -149,3 +149,27 @@ E008 / E009 实录原文，只改呈现密度。
 
 ✅ 无阻断项，允许发布（1 个 ⚠️ 项须记录到 quality-report.md 降级记录）。
 ```
+
+### 站点上线后的逐项核对（2026-09-20，已完成）
+
+上面那条「待办」已销账。站点地址 `https://2440893398.github.io/mobile-preview/`，
+用浏览器实际打开逐项核：
+
+| 项 | 结果 |
+|---|---|
+| Mermaid 出图 | 中英首页与 quickstart 均渲染成 SVG（首屏那张 696x405）。首次截图看到空白是图还没渲染完，不是没出 |
+| hreflang | 三条成对：`zh-Hans` / `en` / `x-default`，中英两页互指一致 |
+| 相对链接 | `./quickstart.md` 被 `jekyll-relative-links` 改写为 `/mobile-preview/quickstart.html`，六条全部可点 |
+| 截图加载 | `naturalWidth > 0`，正文那张真实手机截图正常显示 |
+| sitemap / llms.txt | 均 200 |
+| 英文页 | `lang=en`，H2 六段齐全，语言切换显示「中文」 |
+
+核出并已修的两处：
+
+| 问题 | 影响 | 处置 |
+|---|---|---|
+| `og:image` 多拼了一层 baseurl，实测 404 | 转发到微信、Slack、Twitter 的链接都没有预览图，而那张截图恰好最能一眼说清这工具干什么 | `_config.yml` 里的路径去掉 `/mobile-preview` 前缀，seo-tag 自己会拼；复测 200 |
+| 五步总览图在 375px 下被缩到字号约 7px | 手册读者本来就在手机上，图是那一页的主体 | 小屏改为保持最小宽度 520px、容器横向滚；复测可读 |
+
+> 复核时如果看到的还是旧样式，先带 `?v=2` 这类参数再打开：
+> GitHub Pages 给 HTML 的 `max-age` 是 600 秒，第一次核对就被这个缓存骗过一次。

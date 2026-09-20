@@ -21,12 +21,12 @@ source_anchors:
 
 # 快速上手
 
-跟着做完这一页，你会拿到一条手机上能打开的链接。全程约十分钟。
-
 ```mermaid
 flowchart LR
-  A[装依赖] --> B[npm link] --> C[新开终端] --> D[mp doctor] --> E[mp start] --> F[手机打开]
+  A["1 装<br/>npm install<br/>npm link"] --> B["2 验<br/>mp doctor"] --> C["3 开<br/>mp start --port"] --> D["4 手机打开<br/>链接即密码"] --> E["5 关<br/>mp stop"]
 ```
+
+五步，约十分钟，终点是一条手机上能打开的链接。
 
 ## 前置条件
 
@@ -38,7 +38,7 @@ flowchart LR
 
 起点：一个可以执行命令的终端窗口，当前目录随意。
 
-1. 取回代码并进入目录：`git clone https://github.com/2440893398/mobile-preview.git`，
+1. 取回代码：`git clone https://github.com/2440893398/mobile-preview.git`，
    然后 `cd mobile-preview`。
 2. 装依赖：`npm install`。
 3. 装截图用的浏览器：`npx playwright install chromium`。
@@ -48,7 +48,7 @@ flowchart LR
 6. 关掉当前终端，**开一个新的**，执行 `mp doctor`。
    - 预期：四项都打印 `ok`，末尾一行 `Everything mp needs is present.`（证据 E008）。
 
-新终端这一步不能省。系统的可执行文件搜索路径在终端启动时就固定了，旧窗口看不见刚装好的
+新终端这一步不能省：系统的可执行文件搜索路径在终端启动时就固定了，旧窗口看不见刚装好的
 `mp`。
 
 ## 跑通第一次预览的步骤
@@ -56,10 +56,11 @@ flowchart LR
 起点：`mp doctor` 四项全 `ok`，你的应用已在本机跑起来（例如监听 4173）。
 
 1. 执行 `mp start --port 4173`，把 4173 换成你的应用真实监听的端口。
-2. 等待。命令会依次打印 `... starting the preview daemon`、
-   `... asking trycloudflare.com for a quick tunnel`，只有真正连上才打印链接。
-3. 把打印出来的那条链接发到手机上打开。
-4. 看完后执行 `mp stop`。
+   - 预期：依次打印 `... starting the preview daemon` 与
+     `... asking trycloudflare.com for a quick tunnel`，只有真正连上才打印链接（证据 E009）。
+2. 把打印出来的那条链接发到手机上打开。
+   - 预期：手机浏览器里出现的就是你本机跑着的那个应用。
+3. 看完后执行 `mp stop`。
    - 预期：`stopped port 4173 (2 process tree(s) terminated)`；手机上再刷新就打不开了
      （证据 E009）。
 

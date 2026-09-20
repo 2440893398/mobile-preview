@@ -21,12 +21,12 @@ source_anchors:
 
 # Quickstart
 
-Work through this page and you end up with a link that opens on your phone. About ten minutes.
-
 ```mermaid
 flowchart LR
-  A[install deps] --> B[npm link] --> C[new terminal] --> D[mp doctor] --> E[mp start] --> F[open on phone]
+  A["1 install<br/>npm install<br/>npm link"] --> B["2 check<br/>mp doctor"] --> C["3 open<br/>mp start --port"] --> D["4 on the phone<br/>the link is the password"] --> E["5 close<br/>mp stop"]
 ```
+
+Five steps, about ten minutes, ending in a link that opens on your phone.
 
 ## Prerequisites
 
@@ -49,7 +49,7 @@ Start: a terminal you can type commands into, any working directory.
    - Expected: four lines print `ok`, and the last line reads
      `Everything mp needs is present.` (evidence E008).
 
-The new terminal matters. A shell fixes its executable search path at startup, so the old
+The new terminal matters: a shell fixes its executable search path at startup, so the old
 window cannot see the `mp` you just linked.
 
 ## Running your first preview
@@ -58,11 +58,12 @@ Start: `mp doctor` reports `ok` four times, and your app is already running loca
 (say, on port 4173).
 
 1. Run `mp start --port 4173`, replacing 4173 with the port your app actually listens on.
-2. Wait. The command prints `... starting the preview daemon`, then
-   `... asking trycloudflare.com for a quick tunnel`; the link appears only once the edge
-   connection is up.
-3. Send the printed link to your phone and open it.
-4. Run `mp stop` when you are done.
+   - Expected: it prints `... starting the preview daemon`, then
+     `... asking trycloudflare.com for a quick tunnel`; the link appears only once the edge
+     connection is up (evidence E009).
+2. Send the printed link to your phone and open it.
+   - Expected: the phone browser shows the app running on your machine.
+3. Run `mp stop` when you are done.
    - Expected: `stopped port 4173 (2 process tree(s) terminated)`, and refreshing on the
      phone no longer loads (evidence E009).
 

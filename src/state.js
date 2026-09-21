@@ -65,6 +65,38 @@ export function secretIpcPath(id) {
   return join(secretsDir(), `${id}.sock`)
 }
 
+// ---- the vault ----
+//
+// Saved values, encrypted, one file per project plus the wrapped vault key.
+// Unlike a secret slot these files outlive every daemon, and unlike a slot
+// they do hold values — as AES-GCM ciphertext only. See the 2026-09-21
+// secret-vault design, §4.
+
+export const VAULT_PROJECT_ID_RE = /^[0-9a-f]{16}$/
+
+export function vaultDir() {
+  return join(stateDir(), 'vault')
+}
+
+export function vaultKeyPath() {
+  return join(vaultDir(), 'vault.key')
+}
+
+export function vaultProjectPath(pid) {
+  return join(vaultDir(), `${pid}.json`)
+}
+
+export function vaultAuditPath() {
+  return join(vaultDir(), 'audit.log')
+}
+
+// Rendered files the user chose to keep past their slot. Not secret itself —
+// paths and fingerprints — but the hook reads it to keep the AI's file tools
+// off those paths, and render reads it to know which files it may overwrite.
+export function keptFilesPath() {
+  return join(vaultDir(), 'kept-files.json')
+}
+
 // ---- interaction slots ----
 //
 // One file per `mp interaction ask`, keyed like a secret slot and for the same
@@ -264,6 +296,60 @@ export function writeSecret(id, patch) {
     label: `secret state for ${id}`,
     corruptHint: 'Run `mp secret forget --all` or delete the file.',
   })
+}
+
+export function readVaultKeyFile() {
+  return readStateAt(vaultKeyPath())
+}
+
+export function writeVaultKeyFile(patch) {
+  return writeAt(vaultKeyPath(), patch, {
+    label: 'the vault key file',
+    corruptHint: 'Delete it to start a new vault; every saved value will have to be entered again.',
+  })
+}
+
+export function readVaultProject(pid) {
+  return readStateAt(vaultProjectPath(pid))
+}
+
+export function writeVaultProject(pid, patch) {
+  return writeAt(vaultProjectPath(pid), patch, {
+    label: `saved values for project ${pid}`,
+    corruptHint: 'Run `mp secret forget --saved` in that project, or delete the file.',
+  })
+}
+
+export function readKeptFiles() {
+  const { value } = readStateAt(keptFilesPath())
+  return Array.isArray(value?.files) ? value.files : []
+}
+
+export function writeKeptFiles(fn) {
+  return writeAt(keptFilesPath(), (cur) => ({ files: fn(Array.isArray(cur.files) ? cur.files : []) }), {
+    label: 'the kept rendered files list',
+    corruptHint: 'Delete it; files it listed are no longer protected from the AI\'s file tools.',
+  })
+}
+
+export function clearVaultProject(pid) {
+  const f = vaultProjectPath(pid)
+  if (existsSync(f)) rmSync(f, { force: true })
+}
+
+// Same contract as listSecrets(): never throws, skips what will not parse.
+export function listVaultProjects() {
+  const dir = vaultDir()
+  if (!existsSync(dir)) return []
+
+  const out = []
+  for (const name of readdirSync(dir)) {
+    const m = /^([0-9a-f]{16})\.json$/.exec(name)
+    if (!m) continue
+    const { value } = readVaultProject(m[1])
+    if (value) out.push({ ...value, pid: m[1] })
+  }
+  return out.sort((a, b) => String(a.root).localeCompare(String(b.root)))
 }
 
 export function writeInteraction(id, patch) {

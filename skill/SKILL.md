@@ -32,6 +32,14 @@ the user ticked on the phone, word for word; more commands are approved with
 `cmd /c` / `node -e` or pass anything that prints the environment.
 `mp secret forget --id <id>` when done.
 
+If the user saved the values for this project, `ask` may come back already
+filled (`used saved values — no phone needed`) or with a one-tap confirm link;
+saving is chosen on the phone, never by you. A tool that only reads its key
+from a config file gets a template with `{{mp:NAME}}` placeholders and
+`--render TPL=OUT` on both `ask` and `run` — never a file you write the value
+into yourself. The rendered file is off limits to you; `mp secret peek` shows
+it redacted. Never read or decrypt the vault; `mp secret saved` lists it.
+
 ## Decisions
 
 When the answer you need is a choice among three or more options, two or more

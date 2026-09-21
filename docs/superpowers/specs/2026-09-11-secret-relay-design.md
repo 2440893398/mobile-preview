@@ -1,7 +1,8 @@
 # mobile-preview 密钥中继设计（调研稿）
 
 日期：2026-09-11
-状态：第一版已实现（0.4.0）；§5.4 的 render、§11 的后续项未做
+状态：第一版已实现（0.4.0）；§5.4 的 render、§11 的后续项未做。保存、使用档位、render
+的设计见 [2026-09-21-secret-vault-design.md](2026-09-21-secret-vault-design.md)（未实现）
 前置：`2026-08-05-mobile-preview-design.md`、`2026-08-06-mobile-preview-hardening-design.md`
 
 ## 1. 背景与痛点
@@ -147,6 +148,9 @@ AES-GCM，逐字段加密后再 POST；daemon 用私钥在内存里解开。边�
 已在本机验证 DPAPI 从 PowerShell 可用（`ProtectedData` 往返正常，Node 22）。但它解决
 的不是这个设计要解决的问题，所以先不做。
 
+> 2026-09-21：加密保存已另行设计，DPAPI 用于包装库钥匙，并按用户选的档位决定下次是否要手机确认，
+> 见 [secret-vault 设计](2026-09-21-secret-vault-design.md) §4–§5。上表对 AI 的防护结论不变。
+
 state 文件（`%LOCALAPPDATA%\mobile-preview\secrets\<id>.json`）里**永远没有值**，只有：
 id、purpose、字段名、每个字段的长度和 SHA-256 前 8 位（供用户核对是否填错）、批准的
 用途、daemon pid、过期时间、阶段、使用计数。审计日志在 `secrets\<id>.log`。
@@ -231,6 +235,8 @@ mp secret ask --purpose "配置 OSS 上传" \
 
 确实需要 `render` 的场景留到 1.1 版：写文件 + 在 state 里记 `renderedFiles` + hook 对这些
 路径 deny + `mp secret peek <file>` 提供打码视图。
+
+> 2026-09-21：render 的完整设计见 [secret-vault 设计](2026-09-21-secret-vault-design.md) §6。
 
 ### 5.5 `mp secret status` / `mp secret forget [--id <id> | --all]`
 
@@ -330,9 +336,9 @@ OSS 凭证是否有效」「上传这个目录」，Infisical Agent Vault 的思
 
 ## 11. 后续（不在第一版）
 
-- `render` + 落盘读保护 + `peek`（§5.4）
+- `render` + 落盘读保护 + `peek`（§5.4）——已设计，见 [secret-vault 设计](2026-09-21-secret-vault-design.md) §6
 - `--persist`：DPAPI / Keychain 加密落盘，只解决「daemon 重启后不用重填」，不改变对 AI
-  的防护边界，文档里要写清楚
+  的防护边界，文档里要写清楚——已设计为「保存 + 使用档位」，见同一文档 §4–§5
 - 内建用途：`check-oss`、`check-db`、`put-object` 这类值不进 AI 子进程的操作
 - 跨账号 daemon：以另一个 Windows 用户运行，值与 IPC 都跨账号
 - 链接送达的第二通道：`happy notify` 推送；宿主支持后换成 MCP URL 模式 elicitation

@@ -83,7 +83,10 @@ export const COMMANDS = {
       purpose: { value: '<text>', help: 'One line shown at the top of the form: what these values are for' },
       field: { value: '<NAME[:kind]>', repeat: true, help: 'A field to collect. kind is secret (default, masked, redacted from output), text (visible, not redacted — a bucket name) or multiline (a textarea — a PEM key)' },
       use: { value: '<command>', repeat: true, help: 'A command the AI intends to run with the values, e.g. "npm run deploy"; the user ticks each one on the phone' },
-      id: { value: '<id>', help: 'Ask an existing slot to approve more --use commands instead of opening a new one; the values are not re-entered' },
+      render: { value: '<TPL=OUT>', repeat: true, help: 'A config file to write from a template holding {{mp:NAME}} placeholders, for a tool that only reads its key from a file; written for one `mp secret run --render` and deleted when it exits. The user ticks each one on the phone' },
+      'render-keep': { value: '<TPL=OUT>', repeat: true, help: 'Like --render, but the file stays until `mp secret forget --files`' },
+      refill: { help: 'Ask for the values afresh even if they are saved for this project' },
+      id: { value: '<id>', help: 'Ask an existing slot to approve more --use / --render targets instead of opening a new one; the values are not re-entered' },
       ttl: { value: '<min>', default: '120', help: 'Minutes the values stay in memory once they arrive (1–1440)' },
       'form-ttl': { value: '<min>', default: '30', help: 'Minutes the form link stays open (1–60)' },
       json: { help: 'Print one machine-readable JSON object on stdout instead of prose' },
@@ -107,6 +110,32 @@ export const COMMANDS = {
     flags: {
       id: { value: '<id>', help: 'Which slot to run with (default: the only active one)' },
       cwd: { value: '<dir>', help: 'Working directory for the command (default: the current one)' },
+      render: { value: '<TPL=OUT>', repeat: true, help: 'Write this approved config file before the command starts and delete it when the command exits' },
+    },
+  },
+  'secret render': {
+    summary: 'Write approved config files from their templates; deleted when the slot ends unless approved to keep',
+    args: '<TPL=OUT…>',
+    maxPositionals: 20,
+    flags: {
+      id: { value: '<id>', help: 'Which slot to render with (default: the only active one)' },
+    },
+  },
+  'secret peek': {
+    summary: 'Show a file mp rendered, with every value redacted — to check its shape, never its key',
+    args: '<file>',
+    maxPositionals: 1,
+    flags: {
+      id: { value: '<id>', help: 'Which slot rendered it (default: the only active one)' },
+    },
+  },
+  'secret saved': {
+    summary: 'List what is saved on this computer for this project: names, levels, dates, remembered uses — never values',
+    args: '',
+    maxPositionals: 0,
+    flags: {
+      all: { help: 'Every project, not only the one this directory belongs to' },
+      json: { help: 'Print a machine-readable JSON array on stdout instead of prose' },
     },
   },
   'secret status': {
@@ -118,12 +147,14 @@ export const COMMANDS = {
     },
   },
   'secret forget': {
-    summary: 'Wipe a slot from memory now rather than at its TTL',
-    args: '',
-    maxPositionals: 0,
+    summary: 'Wipe a slot from memory now rather than at its TTL; or delete saved values and kept files',
+    args: '[NAME…]',
+    maxPositionals: 50,
     flags: {
       id: { value: '<id>', help: 'Which slot to forget (default: the only active one)' },
       all: { help: 'Forget every slot, including stale ones' },
+      saved: { help: 'Delete the values saved for this project instead — all of them, or only the NAMEs given' },
+      files: { help: 'Delete the rendered files this project kept instead' },
     },
   },
   // The `interaction` group: a decision the user makes on a page rather than

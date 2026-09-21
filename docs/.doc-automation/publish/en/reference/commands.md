@@ -29,7 +29,7 @@ Global: `-h, --help` shows help, `mp <command> --help` shows one command's optio
 | `mp status` | List active previews and how long each has left | `--json` |
 | `mp stop` | Tear a preview down and leave nothing running | `--port` `--all` |
 | `mp doctor` | Check everything mp needs is installed, on PATH and reachable | none |
-| `mp secret ask/wait/run/status/forget` | The phone fills in credentials the AI may use but never read | `--field` `--use` `--id` |
+| `mp secret ask/wait/run/render/peek/saved/status/forget` | The phone fills in credentials the AI may use but never read; they can be saved encrypted on this computer | `--field` `--use` `--render` `--id` |
 | `mp interaction ask/wait/status/close` | Put a decision on a page, get the answer as JSON | `--html` `--id` `--timeout` |
 
 ## mp start
@@ -63,20 +63,30 @@ also stops stale and unreadable slots.
 
 ## mp secret
 
-Values exist only in each daemon's memory. `status` and `wait` report names and fingerprints,
-never values.
+By default values exist only in each daemon's memory. Tick "remember" on the phone and they are
+saved encrypted on this computer, then used at the level you picked (auto / one tap / passphrase).
+`status`, `wait` and `saved` report names and fingerprints, never values.
 
 | Subcommand | Key flags | Default | Meaning |
 |---|---|---|---|
 | `secret ask` | `--purpose <text>` | none | One line atop the form: what these values are for |
 | | `--field <NAME[:kind]>` | kind `secret` | A field to collect, repeatable. `secret` is masked and redacted from output, `text` is visible and not redacted, `multiline` is a textarea |
 | | `--use <command>` | none | A command the AI intends to run with the values, repeatable; you tick each on the phone |
-| | `--id <id>` | none | Ask an existing slot to approve more uses without re-entering values |
+| | `--render <TPL=OUT>` | none | For a tool that only reads its key from a config file: write it from a template (placeholders are `mp:NAME` in double curly braces), repeatable; you tick each on the phone, and the file is deleted when the command exits |
+| | `--render-keep <TPL=OUT>` | none | Like `--render`, but the file stays until `mp secret forget --files` |
+| | `--refill` | off | Ask for the values afresh even if they are saved for this project |
+| | `--id <id>` | none | Ask an existing slot to approve more uses or render targets without re-entering values |
 | | `--ttl <min>` | 120 | Minutes the values stay in memory once they arrive, 1 to 1440 |
 | | `--form-ttl <min>` | 30 | Minutes the form link stays open, 1 to 60 |
 | `secret wait` | `--timeout <sec>` | 540 | Seconds before giving up; the link stays open regardless |
 | `secret run` | `--cwd <dir>` | current directory | Working directory. Usage is `mp secret run [options] -- <command…>` |
+| | `--render <TPL=OUT>` | none | Write this approved config file before the command starts; delete it when the command exits |
+| `secret render` | `<TPL=OUT…>` | none | Write approved config files; deleted when the slot ends unless approved to keep |
+| `secret peek` | `<file>` | none | Show a file mp wrote, with every value redacted |
+| `secret saved` | `--all` | off | List the fields, levels, dates and remembered uses saved for this project — never values; `--all` lists every project |
 | `secret forget` | `--all` | off | Forget every slot, including stale ones |
+| | `--saved [NAME…]` | off | Delete the values saved for this project instead: all, or only the NAMEs given |
+| | `--files` | off | Delete the rendered files this project kept instead |
 
 ## mp interaction
 

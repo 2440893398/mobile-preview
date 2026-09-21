@@ -151,6 +151,11 @@ transcript, in your context and in every later turn. Collect it through
    value that is fine to see, such as a bucket name; `:multiline` for a PEM key.
    Each `--use` is a command line, quoted as one argument. Declare every command
    you will need now — each later addition costs the user another link.
+   If the user saved these values for this project earlier, `ask` may print
+   `used saved values — no phone needed` and no link at all: they chose "直接用"
+   on the phone, the slot is already filled, go straight to step 4. Or it
+   prints a *confirm* link — one tap for them, no retyping. Either way you
+   asked the same way; saving is decided on the phone, never by you.
 2. Return the printed link as a **bare line of its own**, exactly like a
    preview link, and tell the user in one sentence what the form asks for.
 3. `mp.cmd secret wait --id <id>` blocks until the phone has submitted. It
@@ -175,8 +180,29 @@ transcript, in your context and in every later turn. Collect it through
 Never wrap the run in a shell (`sh -c`, `cmd /c`, `powershell -Command`,
 `node -e`) or pass anything that prints the environment: the hook refuses it,
 and it is the wrong shape anyway — the values are for the tool, not for you.
-If a tool can only read its credentials from a config file, run that tool's own
-`configure` step through `mp secret run` rather than writing the file yourself.
+
+When a tool wants the value in a config file, pick the first of these that works:
+
+1. The tool reads environment variables (dotenv, docker compose, Spring's
+   `${VAR}`, Prisma's `env()`, most CLIs): write the reference or leave the
+   key empty in the file, and `mp secret run` injects it. Nothing on disk.
+2. The tool has its own configure step that reads the value from the
+   environment or stdin: run that step through `mp secret run`.
+3. Only a real value in a file will do: write a **template** with
+   placeholders, never the value — `{{mp:NAME}}` as is, `{{mp:NAME|json}}` as a
+   quoted JSON/YAML/TOML string, `{{mp:NAME|url}}` inside a connection string.
+   Declare it on the ask with `--render config.yml.tpl=config.yml`, then
+   `mp.cmd secret run --id <id> --render config.yml.tpl=config.yml -- npm start`
+   writes the file, runs the command and deletes the file when it exits. The
+   output file must be in `.gitignore` or mp refuses to write it. You cannot
+   read it — the hook refuses — so to change the config edit the template and
+   run again, and to check what came out run `mp.cmd secret peek --id <id> config.yml`,
+   which shows it redacted.
+
+Do not read the vault under the mp state directory or try to decrypt it; to
+see what is saved, `mp.cmd secret saved`. If a check command fails with an
+authentication error after saved values were used, the saved value is
+probably stale: ask again with `--refill`.
 
 Tell the user, once, that a leaked value is bounded by the credential itself:
 a sub-account scoped to one bucket, an STS token or a single-schema database

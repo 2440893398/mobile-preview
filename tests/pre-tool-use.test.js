@@ -190,3 +190,55 @@ test('stdin 一直不关也会自己了结，而不是挂到 hook 超时被杀',
   })
   assert.equal(code, 0)
 })
+
+// ---- 生成出来的配置文件与 vault 钥匙（2026-09-21 vault 设计 §9.1）----
+
+const RENDERED = process.platform === 'win32' ? 'C:\\proj\\config.yml' : '/proj/config.yml'
+const ENV = { MP_STATE_DIR: process.platform === 'win32' ? 'C:\\state\\mp' : '/state/mp' }
+const VAULT_KEY = join(ENV.MP_STATE_DIR, 'vault', 'vault.key')
+const withFiles = (payload) => decide(payload, { env: ENV, files: [RENDERED] })
+
+test('文件工具碰生成出来的配置文件被拒；模板和别的文件放行', () => {
+  for (const tool of ['Read', 'Edit', 'Write', 'MultiEdit']) {
+    const v = withFiles({ tool_name: tool, tool_input: { file_path: RENDERED } })
+    assert.ok(v?.deny, `${tool} 应当被拒`)
+    assert.match(v.deny, /mp secret peek/)
+  }
+  assert.ok(withFiles({ tool_name: 'Grep', tool_input: { pattern: 'key', path: RENDERED } })?.deny)
+  assert.equal(withFiles({ tool_name: 'Read', tool_input: { file_path: `${RENDERED}.tpl` } }), null)
+  assert.equal(withFiles({ tool_name: 'Read', tool_input: { file_path: RENDERED.replace('config', 'other') } }), null)
+})
+
+test('相对路径按 cwd 解析后再比', () => {
+  const cwd = process.platform === 'win32' ? 'C:\\proj' : '/proj'
+  assert.ok(withFiles({ tool_name: 'Grep', tool_input: { pattern: 'k', path: 'config.yml' }, cwd })?.deny)
+})
+
+test('shell 命令提到生成出来的文件被拒：全路径或单独的文件名；模板不算', () => {
+  for (const cmd of [
+    'cat config.yml',
+    'Get-Content .\\config.yml',
+    `type "${RENDERED}"`,
+    'git add -f config.yml',
+    'copy config.yml C:\\tmp\\x.yml',
+  ]) {
+    assert.ok(withFiles(bash(cmd))?.deny, `应当拒绝：${cmd}`)
+  }
+  assert.equal(withFiles(bash('cat config.yml.tpl')), null, '模板本来就可以读')
+  assert.equal(withFiles(bash('ls')), null)
+  assert.equal(withFiles(bash('mp secret run --render config.yml.tpl=config.yml -- npm start')), null, 'mp secret 自己的命令不拦')
+  assert.equal(withFiles(bash('mp.cmd secret peek config.yml')), null)
+})
+
+test('vault 钥匙：按全路径读、或对 mobile-preview 调钥匙串解密，被拒', () => {
+  assert.ok(withFiles({ tool_name: 'Read', tool_input: { file_path: VAULT_KEY } })?.deny)
+  assert.ok(withFiles(bash(`cat "${VAULT_KEY}"`))?.deny)
+  assert.ok(withFiles(ps("[Security.Cryptography.ProtectedData]::Unprotect($b, $e, 'CurrentUser') # mobile-preview vault.key"))?.deny)
+  assert.ok(withFiles(bash('security find-generic-password -s mobile-preview -w'))?.deny)
+  assert.ok(withFiles(bash('secret-tool lookup service mobile-preview account x'))?.deny)
+})
+
+test('别人的 vault.key、与 mobile-preview 无关的 DPAPI 调用都放行', () => {
+  assert.equal(withFiles(bash('ansible-vault view --vault-password-file vault.key secrets.yml')), null)
+  assert.equal(withFiles(ps('[Security.Cryptography.ProtectedData]::Unprotect($b, $null, "CurrentUser")')), null)
+})

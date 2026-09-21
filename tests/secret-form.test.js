@@ -86,6 +86,10 @@ test('完整提交：浏览器侧加密 → 服务端解密 → onSubmit 拿到�
     assert.deepEqual(submissions, [{
       values: { OSS_KEY: 'LTAI5t9f3c1e0b2a', BUCKET: 'my-bucket' },
       uses: ['npm run deploy'],
+      files: [],
+      keep: [],
+      save: null,
+      passphrase: null,
     }])
 
     assert.equal((await post(base, cookie, { ...enc, uses: [] })).status, 404, '只接受一次提交')
@@ -169,7 +173,9 @@ test('approve 模式：页面不含输入框、列出已保存字段名，提交
 
     const res = await post(base, cookie, { uses: ['node deploy.js'] })
     assert.equal(res.status, 200)
-    assert.deepEqual(submissions, [{ values: null, uses: ['node deploy.js'] }])
+    assert.deepEqual(submissions, [{
+      values: null, uses: ['node deploy.js'], files: [], keep: [], save: null, passphrase: null,
+    }])
   })
 })
 

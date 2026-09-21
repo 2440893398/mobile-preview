@@ -180,8 +180,17 @@ See `docs/superpowers/specs/2026-08-05-mobile-preview-design.md`.
 - The daemon self-terminates at TTL, and `mp status`/`mp stop` reap any tunnel
   whose daemon died before it could, so no tunnel outlives what tracks it
 - Values collected by `mp secret` are encrypted in the browser, held in one
-  daemon's memory only, never written to disk or printed, and reachable
-  through a protocol that has no read operation; every use is audited
+  daemon's memory, never printed, and reachable through a protocol that has no
+  read operation; every use is audited
+- A value reaches the disk only if the user ticks "remember" on the phone, and
+  then only as AES-GCM ciphertext under a key the system keystore holds
+  (DPAPI, Keychain, Secret Service) — no keystore, no saving. This keeps the
+  value from anything that merely reads files; it does not keep it from an AI
+  running as the same user that sets out to call the keystore. The passphrase
+  level adds a factor that AI has to guess offline first — a delay whose length
+  is the passphrase's, not a wall
+- A config file rendered with a real value must be git-ignored, is deleted when
+  its command or slot ends, and is kept from the AI's file tools by the hook
 - An `mp interaction` page is served under `default-src 'none'` and refused
   before it is ever linked if it would fetch anything; its audit log records
   which fields were answered, never what they say

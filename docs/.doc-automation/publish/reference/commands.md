@@ -28,7 +28,7 @@ source_anchors:
 | `mp status` | 列出活跃预览与各自剩余时间 | `--json` |
 | `mp stop` | 拆掉预览，并确保没有残留进程 | `--port` `--all` |
 | `mp doctor` | 检查 mp 需要的东西是否都已安装、在 PATH 上、可达 | 无 |
-| `mp secret ask/wait/run/status/forget` | 手机填凭据，AI 可用但读不到 | `--field` `--use` `--id` |
+| `mp secret ask/wait/run/render/peek/saved/status/forget` | 手机填凭据，AI 可用但读不到；可加密保存在本机 | `--field` `--use` `--render` `--id` |
 | `mp interaction ask/wait/status/close` | 把一个决定做成页面，答案以 JSON 回来 | `--html` `--id` `--timeout` |
 
 ## mp start
@@ -62,19 +62,29 @@ source_anchors:
 
 ## mp secret
 
-值只存在于各自守护进程的内存里。`status` 与 `wait` 永远只报字段名与指纹，不报值。
+值默认只在各自守护进程的内存里。你在手机上勾选「记住」后，值会加密保存在本机，下次按你选的档位
+（直接用 / 点一下 / 主密码）使用。`status`、`wait`、`saved` 永远只报字段名与指纹，不报值。
 
 | 子命令 | 关键参数 | 默认 | 说明 |
 |---|---|---|---|
 | `secret ask` | `--purpose <text>` | 无 | 表单顶部的一行说明：这些值拿来干什么 |
 | | `--field <NAME[:kind]>` | kind 为 `secret` | 要收集的字段，可重复。`secret` 掩码且从输出中脱敏，`text` 可见不脱敏，`multiline` 为文本域 |
 | | `--use <command>` | 无 | AI 打算用这些值跑的命令，可重复；由你在手机上逐条勾选 |
-| | `--id <id>` | 无 | 让已有槽位追加批准更多 `--use`，不必重新输入值 |
+| | `--render <TPL=OUT>` | 无 | 工具只认配置文件里的真值时用：从模板生成配置文件（占位符写成双花括号包住的 `mp:NAME`），可重复；由你在手机上勾选，命令跑完即删 |
+| | `--render-keep <TPL=OUT>` | 无 | 同 `--render`，但文件一直保留，直到 `mp secret forget --files` |
+| | `--refill` | 关闭 | 即使本项目保存过这些值，也重新填写 |
+| | `--id <id>` | 无 | 让已有槽位追加批准更多 `--use` / `--render`，不必重新输入值 |
 | | `--ttl <min>` | 120 | 值到达后在内存中保留的分钟数，取值 1 到 1440 |
 | | `--form-ttl <min>` | 30 | 表单链接开放的分钟数，取值 1 到 60 |
 | `secret wait` | `--timeout <sec>` | 540 | 放弃等待前的秒数；链接不受影响仍然开着 |
 | `secret run` | `--cwd <dir>` | 当前目录 | 命令的工作目录。用法是 `mp secret run [options] -- <命令…>` |
+| | `--render <TPL=OUT>` | 无 | 命令启动前写好这个已批准的配置文件，命令退出后删除 |
+| `secret render` | `<TPL=OUT…>` | 无 | 写出已批准的配置文件；槽位结束时删除，批准为保留的除外 |
+| `secret peek` | `<file>` | 无 | 显示 mp 写出的文件，其中每个值都已打码 |
+| `secret saved` | `--all` | 关闭 | 列出本机为本项目保存的字段、档位、日期与记住的用途，不含值；`--all` 列出所有项目 |
 | `secret forget` | `--all` | 关闭 | 清掉每个槽位，包括陈旧的 |
+| | `--saved [NAME…]` | 关闭 | 改为删除本项目保存的值：全部，或只删列出的名字 |
+| | `--files` | 关闭 | 改为删除本项目保留的生成文件 |
 
 ## mp interaction
 

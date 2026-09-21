@@ -59,8 +59,10 @@ export function decryptField(key, name, { iv, ct } = {}) {
 }
 
 // `expected` is the list of field names the form offered; anything else in
-// the submission is refused rather than silently stored.
-export function decryptSubmission(privateKey, { clientPub, salt, fields } = {}, expected) {
+// the submission is refused rather than silently stored. `optional` names may
+// be present or not — the vault passphrase travels this way, encrypted like
+// any field, and only when the page asked for it.
+export function decryptSubmission(privateKey, { clientPub, salt, fields } = {}, expected, { optional = [] } = {}) {
   if (!fields || typeof fields !== 'object' || Array.isArray(fields)) {
     throw new Error('submission has no fields')
   }
@@ -70,8 +72,11 @@ export function decryptSubmission(privateKey, { clientPub, salt, fields } = {}, 
     if (!(name in fields)) throw new Error(`field ${name} is missing`)
     values[name] = decryptField(key, name, fields[name])
   }
+  for (const name of optional) {
+    if (name in fields) values[name] = decryptField(key, name, fields[name])
+  }
   for (const name of Object.keys(fields)) {
-    if (!expected.includes(name)) throw new Error(`unexpected field ${name}`)
+    if (!expected.includes(name) && !optional.includes(name)) throw new Error(`unexpected field ${name}`)
   }
   return values
 }

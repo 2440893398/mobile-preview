@@ -73,6 +73,11 @@ export async function runSecretDaemon({
   // Seam for tests: the real daemon exits the process on forget, TTL and a
   // form that expired unfilled; a test driving it in-process cannot let it.
   exitFn = (code) => process.exit(code),
+  // The pid written to the record — the one `forget` kills if the daemon does
+  // not answer in time. Always this process's own, except in a test running
+  // the daemon inside the test runner: there it must name a stand-in, or a
+  // slow `forget` under load kills the runner itself (seen 2026-09-21).
+  ownerPid = process.pid,
 }) {
   if (!SECRET_ID_RE.test(String(id))) throw new Error(`bad secret id ${JSON.stringify(id)}`)
 
@@ -107,7 +112,7 @@ export async function runSecretDaemon({
   state.writeSecret(id, {
     id,
     purpose,
-    daemonPid: process.pid,
+    daemonPid: ownerPid,
     createdAt,
     expiresAt,
     ttlMinutes,
@@ -403,7 +408,7 @@ export async function runSecretDaemon({
       // already closed
     }
     if (process.platform !== 'win32') rmSync(ipcPath, { force: true })
-    clearOwnedSecret(id)
+    clearOwnedSecret(id, ownerPid)
   }
 
   const exitOnShutdown = (code = 0) => {

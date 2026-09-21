@@ -1,4 +1,4 @@
-import { test } from 'node:test'
+import { after, test } from 'node:test'
 import assert from 'node:assert/strict'
 import { mkdtempSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -54,9 +54,24 @@ function ipcPathFor(id) {
     : join(dir, `${id}-${ipcCounter}.sock`)
 }
 
+// daemon 跑在测试进程里，放着不管它记下的 daemonPid 就是测试进程自己。而
+// `forget` 等 daemon 清记录只等一秒，等不到就 taskkill /T /F 那个 pid——全套
+// 并行跑、CPU 吃紧的时候这一秒真的会用完，测试进程于是把自己杀了：文件退出码 1，
+// 跑到一半，没有一个测试报错（2026-09-21）。所以每个 daemon 记一个替身子进程的
+// pid；真要杀，杀的是替身。
+const standIns = []
+after(() => { for (const c of standIns) c.kill() })
+function standIn() {
+  const c = spawn(NODE, ['-e', 'setInterval(() => {}, 1 << 30)'], { stdio: 'ignore', windowsHide: true })
+  standIns.push(c)
+  return c
+}
+
 async function startDaemon(overrides = {}) {
   const id = mintSecretId()
+  const holder = standIn()
   const handle = await runSecretDaemon({
+    ownerPid: holder.pid,
     id,
     purpose: '配置 OSS 上传',
     fields: [{ name: 'OSS_KEY', kind: 'secret' }, { name: 'BUCKET', kind: 'text' }],

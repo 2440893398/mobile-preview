@@ -264,7 +264,10 @@ test('startTunnel 放弃等待时指向日志文件', async () => {
       bin: 'fake-cloudflared',
       spawnFn: fakeSpawn(dir, silent),
       logPath,
-      timeoutMs: 300,
+      // Long enough for the fake — a real node child — to start and write
+      // its line before startTunnel gives up. At 300 ms a busy full-suite run
+      // killed it first and the log held only "attempt 1/1" (2026-09-21).
+      timeoutMs: 3_000,
       tries: 1,
       retryDelayMs: 0,
     }),
@@ -345,7 +348,10 @@ test('只拿到 URL、从未注册 edge 连接时，startTunnel 判定为失败�
       bin: 'fake-cloudflared',
       spawnFn: fakeSpawn(dir, URL_BUT_NEVER_REGISTERS),
       logPath,
-      timeoutMs: 500,
+      // Room for the fake — a real node child — to print its URL before the
+      // wait ends; at 500 ms a loaded machine timed out first and the failure
+      // was classified as something else entirely (2026-09-21).
+      timeoutMs: 3_000,
       tries: 1,
       retryDelayMs: 0,
     }),

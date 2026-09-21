@@ -63,6 +63,11 @@ export async function runInteractionDaemon({
   // would tell someone their answer failed after it had arrived.
   closeDelayMs = 45_000,
   exitFn = (code) => process.exit(code),
+  // The pid written to the record — the one `close` kills if the daemon does
+  // not answer in time. Always this process's own, except in a test running
+  // the daemon inside the test runner: there it must name a stand-in, or a
+  // slow `close` under load kills the runner itself (seen 2026-09-21).
+  ownerPid = process.pid,
 }) {
   if (!INTERACTION_ID_RE.test(String(id))) throw new Error(`bad interaction id ${JSON.stringify(id)}`)
   const first = checkPage(html)
@@ -104,7 +109,7 @@ export async function runInteractionDaemon({
   state.writeInteraction(id, {
     id,
     purpose,
-    daemonPid: process.pid,
+    daemonPid: ownerPid,
     createdAt,
     expiresAt,
     ttlMinutes,
@@ -370,7 +375,7 @@ export async function runInteractionDaemon({
       // already closed
     }
     if (process.platform !== 'win32') rmSync(ipcPath, { force: true })
-    clearOwnedInteraction(id)
+    clearOwnedInteraction(id, ownerPid)
   }
 
   const exitOnShutdown = (code = 0) => {

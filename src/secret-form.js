@@ -61,6 +61,11 @@ function useHtml(use, i) {
   return `<label class="use"><input type="checkbox" data-use="${i}" checked><code>${esc(use)}</code></label>`
 }
 
+// The message line is `statusEl`, never `status`: at the top level of a page
+// that name is window.status, a legacy string property, and every
+// `.textContent =` on it vanished without an error. Since 0.4.0 the form
+// showed no message at all — not "加密并提交中…", not a server's 400 — which
+// only driving it in a real mobile browser turned up (2026-09-21).
 const PAGE_JS = `
 document.querySelectorAll('[data-toggle]').forEach(function (b) {
   b.addEventListener('click', function () {
@@ -71,12 +76,12 @@ document.querySelectorAll('[data-toggle]').forEach(function (b) {
   })
 })
 var form = document.getElementById('form')
-var status = document.getElementById('status')
+var statusEl = document.getElementById('status')
 form.addEventListener('submit', async function (ev) {
   ev.preventDefault()
   var btn = document.getElementById('submit')
   btn.disabled = true
-  status.textContent = '加密并提交中…'
+  statusEl.textContent = '加密并提交中…'
   try {
     var fields = {}
     document.querySelectorAll('[data-field]').forEach(function (el) {
@@ -107,7 +112,7 @@ form.addEventListener('submit', async function (ev) {
     document.body.innerHTML = '<h1>已收到</h1><p>值已经交给这台电脑上的进程，这个页面可以关掉了。</p>'
       + '<p class="note">这条链接现在已经失效。</p>'
   } catch (err) {
-    status.textContent = String(err && err.message || err)
+    statusEl.textContent = String(err && err.message || err)
     btn.disabled = false
   }
 })

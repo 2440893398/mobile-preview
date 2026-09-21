@@ -183,3 +183,16 @@ test('renderFormPage 对 purpose 与用途做 HTML 转义，并不让 JSON 关�
   assert.doesNotMatch(html, /<img src=x/)
   assert.ok(!html.includes('</script><script>alert'), '用途文本进了 JSON 也不能闭合 script')
 })
+
+// 2026-09-21 在手机视口里真点出来的：页面脚本曾经声明全局 `var status`，而那是
+// window.status —— 一个字符串属性。之后所有 status.textContent = … 都静默失效，
+// 表单上从来不显示任何提示，包括服务端返回的 400。
+test('页面脚本不声明全局 status（那是 window.status，赋值会静默失效）', () => {
+  for (const mode of ['fill', 'confirm', 'approve']) {
+    const html = renderFormPage({
+      purpose: 'p', mode, fields: [{ name: 'K', kind: 'secret' }], publicJwk: { kty: 'EC', crv: 'P-256', x: 'x', y: 'y' },
+    })
+    assert.doesNotMatch(html, /(?:var|let|const)\s+status\b/)
+    assert.doesNotMatch(html, /[^.\w]status\.textContent/)
+  }
+})

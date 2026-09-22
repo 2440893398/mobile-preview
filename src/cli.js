@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process'
-import { createConnection } from 'node:net'
+import { createConnection, createServer } from 'node:net'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import * as state from './state.js'
@@ -14,6 +14,7 @@ import {
   COMMANDS, GROUPS, VERSION, renderCommandHelp, renderGroupHelp, renderHelp,
 } from './usage.js'
 import { LOCALHOST_HARDCODE_HINT, formatDoctor, runChecks } from './doctor.js'
+import { resolveServeTarget } from './static.js'
 import { createSecretCommands } from './secret-cli.js'
 import { createInteractionCommands } from './interaction-cli.js'
 
@@ -224,7 +225,9 @@ export function formatCapture({
   return lines.join('\n')
 }
 
-export function formatStart({ tunnelUrl, sessionToken, expiresAt, dev }) {
+export function formatStart({
+  tunnelUrl, sessionToken, expiresAt, dev, serve = null, port = null,
+}) {
   const mins = Math.round((expiresAt - Date.now()) / 60_000)
   const lines = [
     `preview: ${previewUrl({ tunnelUrl, sessionToken })}`,
@@ -236,6 +239,12 @@ export function formatStart({ tunnelUrl, sessionToken, expiresAt, dev }) {
     'running in the background, no window — `mp status` to check on it,'
     + ' `mp stop` to end it early',
   ]
+  if (serve) {
+    // Named because the agent that ran this did not choose the port and has no
+    // other way to learn it — and because "mp is serving this" is the fact that
+    // makes a second, hand-started server unnecessary.
+    lines.push(`serving ${serve} on 127.0.0.1:${port} — mp's own server, it stops with the preview`)
+  }
   if (dev) {
     lines.push('dev mode: dev server exposed. WebSockets are not proxied, so Vite HMR '
       + 'does not work through the preview — reload the page to pick up changes.')
@@ -262,7 +271,7 @@ export function formatStatus(previews, now = Date.now()) {
     // blocks unselectable, and a link the user cannot copy is a link that
     // never arrives. See skill/SKILL.md.
     const lines = [
-      `port ${s.targetPort}:`,
+      s.serve ? `port ${s.targetPort} (mp serving ${s.serve}):` : `port ${s.targetPort}:`,
       previewUrl(s),
       `  expires in ${mins} min, artifacts: ${(s.artifacts || []).length}`,
     ]
@@ -299,6 +308,7 @@ function startPayload(s, port) {
     expiresAt: s.expiresAt,
     expiresInMinutes: Math.round((s.expiresAt - Date.now()) / 60_000),
     dev: Boolean(s.dev),
+    serve: s.serve ?? null,
   }
 }
 
@@ -329,6 +339,8 @@ function startView(s) {
     sessionToken: s.sessionToken,
     expiresAt: s.expiresAt,
     dev: s.dev,
+    serve: s.serve ?? null,
+    port: s.targetPort,
   }
 }
 
@@ -342,6 +354,23 @@ function portIsOpen(port) {
     sock.once('connect', () => done(true))
     sock.once('error', () => done(false))
     sock.setTimeout(1500, () => done(false))
+  })
+}
+
+// --serve picks its own port rather than asking for one: the whole reason the
+// flag exists is that a port chosen by hand is a port something else may
+// already be sitting on, serving a page from an hour ago. The kernel's choice
+// is free by definition. The gap between closing this listener and the daemon
+// binding the same number is a few milliseconds wide; if something takes it in
+// between, the daemon says so rather than proxying whatever landed there.
+function freePort() {
+  return new Promise((ok, no) => {
+    const probe = createServer()
+    probe.once('error', no)
+    probe.listen(0, '127.0.0.1', () => {
+      const { port } = probe.address()
+      probe.close(() => ok(port))
+    })
   })
 }
 
@@ -518,8 +547,32 @@ async function cmdStart(args) {
   const parsed = parseArgs(args, 'start')
   if (parsed.help) return console.log(renderCommandHelp('start'))
 
-  const port = numericFlag(parsed, 'port', 5173, { integer: true, min: 1, max: 65535 })
   const dev = Boolean(parsed.dev)
+
+  // Both flags answer "what is on the other end of the tunnel", so only one of
+  // them may: --port points at an app the user started, --serve makes mp the
+  // app. Silently letting --port win would put the tunnel on whatever happens
+  // to be listening there — the exact confusion --serve exists to end.
+  let serve = null
+  if (parsed.serve !== undefined) {
+    if (parsed.port !== undefined) {
+      fail('--serve and --port cannot be combined: with --serve, mp starts the server itself '
+        + 'and picks a free port. Drop --port, or drop --serve and start the app yourself.')
+    }
+    if (dev) {
+      fail('--serve and --dev cannot be combined: --dev exposes a dev server, --serve serves '
+        + 'static files. Point --port at the dev server instead.')
+    }
+    try {
+      serve = resolveServeTarget(parsed.serve)
+    } catch (err) {
+      fail(String(err?.message || err))
+    }
+  }
+
+  const port = serve
+    ? await freePort()
+    : numericFlag(parsed, 'port', 5173, { integer: true, min: 1, max: 65535 })
   // Upper bound is 1440 minutes (24h), not the 35791min ceiling setTimeout's
   // 2^31-1 ms limit would technically allow. A preview is for showing a
   // running app to a phone during a work session, not something to leave
@@ -584,14 +637,18 @@ async function cmdStart(args) {
 
   if (existing) cleanupStale(port)
 
-  if (!(await portIsOpen(port))) {
+  // With --serve there is deliberately nothing listening yet: the daemon binds
+  // this port itself, a few milliseconds from now.
+  if (!serve && !(await portIsOpen(port))) {
     fail(`nothing is listening on 127.0.0.1:${port}. Start your app first.`, { port })
   }
 
   const galleryDir = state.galleryDir(port)
   const child = spawn(process.execPath, [
     join(HERE, 'daemon-entry.js'),
-    JSON.stringify({ targetPort: port, dev, ttlMinutes: ttl, graceMinutes: grace, galleryDir }),
+    JSON.stringify({
+      targetPort: port, serve, dev, ttlMinutes: ttl, graceMinutes: grace, galleryDir,
+    }),
   ], { detached: true, stdio: 'ignore', windowsHide: true })
   child.unref()
 
@@ -689,6 +746,7 @@ function statusView(s) {
     expiresAt: s.expiresAt,
     expiresInMinutes: Math.round((s.expiresAt - Date.now()) / 60_000),
     dev: Boolean(s.dev),
+    serve: s.serve ?? null,
     artifacts: s.artifacts || [],
     exchangeable: !windowClosed(s, Date.now()),
     // Same reason as the pid line in formatStatus: with no window to point at,

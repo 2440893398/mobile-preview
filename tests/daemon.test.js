@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { createServer } from 'node:net'
 
 const dir = mkdtempSync(join(tmpdir(), 'mp-daemon-'))
 process.env.MP_STATE_DIR = dir
@@ -285,3 +286,54 @@ test('clearOwnedState 对不存在的槽位是无操作', () => {
 })
 
 process.on('exit', () => rmSync(dir, { recursive: true, force: true }))
+
+// 「预览到期只关了隧道，网页服务器留在本机」——2026-09-22 用户在手机上撞到的
+// 那次，点开新链接看到的是别的任务半天前留在那个端口上的页面。--serve 把服务器
+// 放进 daemon 自己的进程里，就是为了让它跟着预览一起死。
+test('--serve：页面由 daemon 自己端着，shutdown 之后那个端口必须彻底空出来', async () => {
+  const port = 6330
+  const site = join(dir, 'served-site')
+  mkdirSync(site, { recursive: true })
+  writeFileSync(join(site, 'index.html'), '<!doctype html><title>端给你看</title>')
+
+  await withFakeDaemon(port, { serve: { root: site, file: null } }, async (handle) => {
+    const res = await fetch(`http://127.0.0.1:${port}/`)
+    assert.equal(res.status, 200, 'daemon 起来了就该能直接访问被端的页面')
+    assert.match(await res.text(), /端给你看/)
+
+    const s = state.read(port)
+    assert.equal(s.serve, site, 'status 要说得出这条预览端的是什么，否则没人知道它还在')
+
+    handle.shutdown()
+    // 关掉之后端口必须能被别人重新占上——这正是从前做不到的那一点。
+    const reclaim = createServer()
+    await new Promise((ok, no) => {
+      reclaim.once('error', no)
+      reclaim.listen(port, '127.0.0.1', ok)
+    })
+    await new Promise((r) => reclaim.close(r))
+  })
+})
+
+test('--serve 撞上已被占用的端口：当场失败并说清楚，而不是把隧道接到别人的服务器上', async () => {
+  const port = 6331
+  const squatter = createServer((_, res) => res.end('我是先来的'))
+  await new Promise((r) => squatter.listen(port, '127.0.0.1', r))
+  const site = join(dir, 'served-site-2')
+  mkdirSync(site, { recursive: true })
+  writeFileSync(join(site, 'index.html'), '<!doctype html>x')
+
+  const exits = []
+  const realExit = process.exit
+  process.exit = (code) => { exits.push(code); throw new Error('exit') }
+  try {
+    await assert.rejects(() => withFakeDaemon(port, { serve: { root: site, file: null } }, async () => {}))
+  } finally {
+    process.exit = realExit
+    await new Promise((r) => squatter.close(r))
+  }
+  assert.deepEqual(exits, [1], '绑不上就该退出，不能继续往下起隧道')
+  assert.match(state.read(port).error, /already in use/)
+  assert.equal(state.read(port).errorReason, 'serve-bind')
+  state.clear(port)
+})

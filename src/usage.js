@@ -24,7 +24,8 @@ export const COMMANDS = {
     args: '',
     maxPositionals: 0,
     flags: {
-      port: { value: '<n>', default: '5173', help: 'Local port to expose — the port your app already listens on' },
+      port: { value: '<n>', default: '5173', help: 'Local port to expose — the port your app already listens on. With --serve, mp picks a free port itself and this is refused' },
+      serve: { value: '<path>', help: 'Serve this file or directory from mp itself instead of proxying an app you started. mp picks a free port, hosts it inside the preview daemon, and it goes away with the preview — use this for a page, never a hand-rolled static server' },
       ttl: { value: '<min>', default: '30', help: 'Minutes before the preview self-terminates (1–1440)' },
       grace: { value: '<min>', default: 'the --ttl value, i.e. reusable until expiry', help: 'Minutes the link stays exchangeable after its first use (0 = one-shot)' },
       dev: { help: 'Expose a dev server rather than a build (larger attack surface)' },

@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { createProxy } from './proxy.js'
+import { createStaticServer } from './static.js'
 import { hashToken, mintToken } from './auth.js'
 import { isAlive, killTree, startTunnel } from './tunnel.js'
 import * as state from './state.js'
@@ -133,6 +134,12 @@ export function previewHealth(s, now = Date.now()) {
 
 export async function runDaemon({
   targetPort,
+  // `{ root, file }` from resolveServeTarget, or null for the ordinary case
+  // where the user's own app is already listening on targetPort. When set,
+  // mp is the app: the static server runs inside this process, so the TTL
+  // that ends the preview ends the server too. That is the whole point of
+  // the flag — see static.js for what it replaced.
+  serve = null,
   dev = false,
   ttlMinutes = 30,
   // null means "match the ttl": the window opens on first exchange, so a ttl's
@@ -148,6 +155,39 @@ export async function runDaemon({
   startTunnelFn = startTunnel,
 }) {
   mkdirSync(galleryDir, { recursive: true })
+
+  // Bound before anything else claims the slot: a port that turns out to be
+  // taken must fail as "pick another one", not as a half-started preview
+  // whose tunnel points at a stranger's server.
+  let staticServer = null
+  if (serve) {
+    staticServer = createStaticServer(serve)
+    try {
+      await new Promise((ok, no) => {
+        staticServer.once('error', no)
+        staticServer.listen(targetPort, '127.0.0.1', () => {
+          staticServer.removeListener('error', no)
+          ok()
+        })
+      })
+    } catch (err) {
+      const why = err?.code === 'EADDRINUSE'
+        ? `port ${targetPort} is already in use, so --serve cannot bind it`
+        : `could not serve ${serve.file || serve.root}: ${err?.message || err}`
+      state.write(targetPort, {
+        error: why,
+        errorReason: 'serve-bind',
+        daemonPid: process.pid,
+        stage: 'failed',
+        stageAt: Date.now(),
+      })
+      process.exit(1)
+    }
+  }
+
+  // What `mp status` shows instead of "the app on port N": with --serve there
+  // is no app of the user's, and the port is one mp picked.
+  const servePath = serve ? join(serve.root, serve.file || '') : null
 
   const galleryToken = mintToken()
   const sessionToken = mintToken()
@@ -190,6 +230,7 @@ export async function runDaemon({
     targetPort,
     proxyPort,
     dev,
+    serve: servePath,
     expiresAt,
     graceMs,
     galleryDir,
@@ -205,6 +246,15 @@ export async function runDaemon({
   const shutdown = () => {
     killTree(tunnelPid)
     proxy.close()
+    // The served page goes when the preview goes. Nothing else knows this
+    // server exists, so if it is not closed here it is not closed at all.
+    if (staticServer) {
+      try {
+        staticServer.close()
+      } catch {
+        // already closed
+      }
+    }
     clearOwnedState(targetPort)
   }
 
@@ -261,6 +311,7 @@ export async function runDaemon({
       proxyPort,
       targetPort,
       dev,
+      serve: servePath,
       expiresAt,
       graceMs,
       galleryDir,

@@ -254,3 +254,28 @@ ps('PowerShell 下 --json 的输出能直接喂给 ConvertFrom-Json', () => {
     rmSync(dir, { recursive: true, force: true })
   }
 })
+
+// --serve 是给「把一个网页端给手机看」用的：以前那要 AI 自己起一个静态服务器，
+// 起完没人关，端口就一直被占着。三条都在起 daemon 之前就该被拦下来。
+test('--serve 和 --port 不能同时给：谁在隧道那一头只能有一个答案', () => withFixture(async (dir) => {
+  const page = join(dir, 'page.html')
+  writeFileSync(page, '<!doctype html><title>x</title>')
+  const r = await runMp(dir, ['start', '--serve', page, '--port', '4321']).done
+  assert.notEqual(r.code, 0)
+  assert.match(r.stderr, /--serve and --port cannot be combined/)
+}))
+
+test('--serve 和 --dev 不能同时给', () => withFixture(async (dir) => {
+  const page = join(dir, 'page.html')
+  writeFileSync(page, '<!doctype html><title>x</title>')
+  const r = await runMp(dir, ['start', '--serve', page, '--dev']).done
+  assert.notEqual(r.code, 0)
+  assert.match(r.stderr, /--serve and --dev cannot be combined/)
+}))
+
+test('--serve 指到一个不存在的路径：当场说清楚，不去起 daemon', () => withFixture(async (dir) => {
+  const r = await runMp(dir, ['start', '--serve', join(dir, 'nope.html')]).done
+  assert.notEqual(r.code, 0)
+  assert.match(r.stderr, /no such file or directory/)
+  assert.equal(existsSync(join(dir, 'previews')), false, '连槽位都不该建')
+}))

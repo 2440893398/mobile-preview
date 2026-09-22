@@ -95,6 +95,14 @@ fill the same page in a second time.
 
 ## Workflow
 
+To show a **page** — one HTML file, or a folder of built files — do not start a
+server: `mp start --serve <path>` picks a free port, serves it from inside the
+preview daemon, and takes it down with the preview. A directory is served whole;
+a single file is served alone, so its siblings stay off the url. It refuses
+`--port` (it chooses one) and `--dev` (it serves files).
+
+For a **running app**:
+
 1. Start the target app locally, detached — see the rule below.
 2. Run `mp start --port <port>`. It prints the stage it is waiting on and only
    returns a link once cloudflared has registered with the edge; `mp start --json`
@@ -125,6 +133,13 @@ page had console errors or failed requests.
   five and a half hours later, replaying its own first reply. If a tracked task
   is unavoidable, stop every one of them before returning the link. `mp`'s own
   daemon is detached with its stdio discarded and never does this.
+- **Stop what you started.** `mp stop` ends mp's daemon and tunnel and nothing
+  else: a server you started keeps its port forever. Seven such leftovers were
+  found on one machine, the oldest three days old, and the damage was not
+  memory — a later preview pointed at a port one of them still held, and the
+  user opened a fresh link onto a page from a previous task. For a plain page
+  use `--serve` so there is nothing to leak; for a real app, stop it in the
+  same breath as `mp stop`. `mp status` names what each preview serves.
 - **Output the preview link as a bare line.** Never wrap it in a code block,
   backticks, or any other markdown. Many phone clients render code blocks
   unselectable and unclickable, and a link the user cannot copy is a link that

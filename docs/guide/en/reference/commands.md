@@ -24,7 +24,7 @@ Global: `-h, --help` shows help, `mp <command> --help` shows one command's optio
 
 | Command | What it does | Flags you reach for |
 |---|---|---|
-| `mp start` | Expose a local port as a temporary authenticated public link | `--port` `--ttl` `--dev` |
+| `mp start` | Expose a local port as a temporary authenticated public link | `--port` `--serve` `--ttl` `--dev` |
 | `mp capture` | Screenshot at phone size and report what went wrong on the page | `--port` `--full-page` `--network-idle` |
 | `mp status` | List active previews and how long each has left | `--json` |
 | `mp stop` | Tear a preview down and leave nothing running | `--port` `--all` |
@@ -36,7 +36,8 @@ Global: `-h, --help` shows help, `mp <command> --help` shows one command's optio
 
 | Flag | Default | Meaning |
 |---|---|---|
-| `--port <n>` | 5173 | Local port to expose — the one your app already listens on |
+| `--port <n>` | 5173 | Local port to expose — the one your app already listens on; refused together with `--serve` |
+| `--serve <path>` | none | Serve this file or directory from mp itself instead of proxying a server you started. mp picks a free port and hosts it inside the preview daemon, so it goes away with the preview. A directory is served whole; a single file is served alone, so its siblings stay off the url
 | `--ttl <min>` | 30 | Minutes before the preview self-terminates, 1 to 1440 |
 | `--grace <min>` | same as `--ttl` | Minutes the link stays exchangeable after first use; `0` makes it one-shot |
 | `--dev` | off | Expose a dev server rather than a build, a larger attack surface |

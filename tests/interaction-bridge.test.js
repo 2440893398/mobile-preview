@@ -221,3 +221,110 @@ test('一直送不出去时，答案变成一段可以粘回对话里的话', as
     assert.deepEqual(errors, [], '严格 CSP 下不该有控制台错误')
   })
 })
+
+// 手机上真正发生的：必填项没填，页面把红条贴在屏幕底边——而屏幕底边正是提交
+// 按钮待的地方。提示盖住了它让人再按一次的那个按钮。(用户, 2026-09-22)
+//
+// 两种页面都要测：按钮自己钉在底部的，和按钮跟着正文排到页尾的。前者要红条
+// 让到它上面去，后者要页面底下腾出位置，能滚到按钮完整露出来。
+const PINNED_HTML = `<!doctype html>
+<html lang="zh"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"></head>
+<body data-mp-form style="margin:0;padding:0 16px 20px">
+<div style="height:1400px">很长的一页</div>
+<label>城市 <input name="city" required></label>
+<div style="position:fixed;left:0;right:0;bottom:0;background:#fff;padding:12px;box-sizing:border-box">
+<button type="button" data-mp-submit style="width:100%;height:52px">确认</button>
+</div>
+</body></html>`
+
+const FLOWING_HTML = `<!doctype html>
+<html lang="zh"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"></head>
+<body data-mp-form style="margin:0;padding:0 16px 20px">
+<div style="height:1400px">很长的一页</div>
+<label>城市 <input name="city" required></label>
+<button type="button" data-mp-submit style="width:100%;height:52px;margin-top:16px">确认</button>
+</body></html>`
+
+async function onPage(t, html, run) {
+  const executablePath = findBrowserExecutable()
+  if (!executablePath) {
+    t.skip('本机没有可用的 chromium')
+    return
+  }
+  const { chromium } = await import('playwright')
+  const token = mintToken()
+  const server = createInteractionServer({
+    html,
+    requestId: 'i-bridge3',
+    revision: 1,
+    contentDigest: contentDigest(html),
+    sessionHash: hashToken(token),
+    expiresAt: Date.now() + 300_000,
+    draft: () => null,
+    onDraft: () => {},
+    onSubmit: () => ({ receiptId: 'rc-cover', duplicate: false }),
+  })
+  await new Promise((r) => server.listen(0, '127.0.0.1', r))
+  const base = `http://127.0.0.1:${server.address().port}`
+  const browser = await chromium.launch({ executablePath })
+  try {
+    const context = await browser.newContext({ viewport: { width: 390, height: 844 } })
+    const page = await context.newPage()
+    await page.goto(`${base}/?__mp_token=${token}`)
+    await run(page)
+  } finally {
+    await browser.close()
+    server.close()
+  }
+}
+
+// 「按钮还点得着吗」只有一种问法算数：往按钮正中间打一个点，看接住它的是谁。
+async function buttonState(page) {
+  return page.evaluate(() => {
+    const b = document.querySelector('[data-mp-submit]')
+    const r = b.getBoundingClientRect()
+    const hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2)
+    const bar = document.getElementById('mp-receipt-bar')
+    return {
+      reachable: !!hit && (hit === b || b.contains(hit)),
+      onScreen: r.top >= 0 && r.bottom <= window.innerHeight + 0.5,
+      barText: bar && !bar.hidden ? bar.textContent : '',
+      barTop: bar && !bar.hidden ? bar.getBoundingClientRect().top : null,
+      buttonTop: r.top,
+      pad: getComputedStyle(document.body).paddingBottom,
+    }
+  })
+}
+
+test('必填项没填的红条，不许盖住钉在底部的提交按钮', async (t) => {
+  await onPage(t, PINNED_HTML, async (page) => {
+    await page.click('[data-mp-submit]')
+    await page.waitForTimeout(200)
+
+    const s = await buttonState(page)
+    assert.match(s.barText, /必填/, '该说的话还是要说')
+    assert.ok(s.reachable, '红条不能挡在按钮上：人得能再按一次')
+    assert.ok(s.barTop <= s.buttonTop + 0.5, '红条要让到按钮那一条的上面去')
+
+    // 填上之后，红条说的已经不是实话了，它占的那条也该还回去。
+    await page.fill('input[name=city]', '深圳')
+    await page.waitForTimeout(150)
+    const after = await buttonState(page)
+    assert.equal(after.barText, '', '填好了就不该还红着')
+    assert.equal(after.pad, '20px', '腾出来的位置要原样还回去')
+  })
+})
+
+test('红条底下压着的正文，要能滚出来', async (t) => {
+  await onPage(t, FLOWING_HTML, async (page) => {
+    await page.click('[data-mp-submit]')
+    await page.waitForTimeout(200)
+    await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight))
+    await page.waitForTimeout(150)
+
+    const s = await buttonState(page)
+    assert.match(s.barText, /必填/)
+    assert.ok(s.onScreen, '滚到底时按钮要整个露在屏幕里')
+    assert.ok(s.reachable, '排在页尾的按钮同样不能被红条压住')
+  })
+})

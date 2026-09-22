@@ -276,6 +276,7 @@ export const BRIDGE_JS = `
   }
 
   function tell(text, tone) {
+    gapNotice = false
     var target = document.querySelector('[data-mp-receipt]')
     if (target) {
       target.textContent = text
@@ -288,6 +289,10 @@ export const BRIDGE_JS = `
       bar.id = 'mp-receipt-bar'
       bar.setAttribute('role', 'status')
       document.body.appendChild(bar)
+      // The keyboard opening, the URL bar collapsing, a turn to landscape:
+      // every one of them moves the edge the bar was measured against.
+      window.addEventListener('resize', place)
+      window.addEventListener('orientationchange', place)
     }
     // Three tones, because "still going" is not "it failed": a page that
     // says the same red thing while it retries has already told the person
@@ -300,7 +305,95 @@ export const BRIDGE_JS = `
       + 'padding:14px max(16px, calc((100% - var(--mp-content-width, 46rem)) / 2));'
       + 'font:15px/1.5 -apple-system,"SF Pro Text","PingFang SC","Noto Sans SC",sans-serif;color:#fff;'
       + 'background:' + back
+    bar.hidden = false
     bar.textContent = text
+    place()
+  }
+
+  function hush() {
+    gapNotice = false
+    var target = document.querySelector('[data-mp-receipt]')
+    if (target) {
+      target.textContent = ''
+      target.hidden = true
+      return
+    }
+    var bar = document.getElementById('mp-receipt-bar')
+    if (!bar || bar.hidden) return
+    bar.textContent = ''
+    bar.hidden = true
+    place()
+  }
+
+  // ---- where the bar is allowed to sit ----
+  //
+  // The bar is the one thing on the page the page did not lay out, and it is
+  // pinned to the bottom edge — which on a phone is exactly where the submit
+  // button is. Until 2026-09-22 it simply landed on top: leave a required
+  // field empty, and the thing that says so covers the button you have to
+  // press again. (the user, 2026-09-22)
+  //
+  // So the bar pays for its own space. It lifts itself above whatever the
+  // page has already pinned down there, and reserves the rest underneath the
+  // page so anything in normal flow can still be scrolled clear of it.
+
+  // How much of the bottom edge the page has already claimed. Measured from
+  // the submit buttons outwards: a pinned action bar is whichever ancestor of
+  // theirs stopped scrolling, and nothing else down there is in the way.
+  function pinnedBottom() {
+    var h = window.innerHeight || 0
+    var lift = 0
+    all('[data-mp-submit]').forEach(function (b) {
+      for (var el = b; el && el !== document.body; el = el.parentElement) {
+        var pos = ''
+        try { pos = window.getComputedStyle(el).position } catch (e) {}
+        if (pos !== 'fixed' && pos !== 'sticky') continue
+        var r = el.getBoundingClientRect()
+        // Pinned *to the bottom*: a sticky header is not in anyone's way,
+        // and a sticky bar the page has scrolled past is not either.
+        if (r.bottom >= h - 4 && r.top > 0 && r.top < h) lift = Math.max(lift, Math.ceil(h - r.top))
+        break
+      }
+    })
+    return lift
+  }
+
+  function place() {
+    var bar = document.getElementById('mp-receipt-bar')
+    if (!bar) return
+    if (bar.hidden) return reserve(0)
+    var lift = pinnedBottom()
+    bar.style.bottom = lift + 'px'
+    return reserve(lift + Math.ceil(bar.getBoundingClientRect().height))
+  }
+
+  // Added to whatever padding the page already had, not instead of it —
+  // read once, while it is still the page's own.
+  var basePad = null
+  function reserve(px) {
+    if (basePad === null) {
+      var cur = ''
+      try { cur = window.getComputedStyle(document.body).paddingBottom } catch (e) {}
+      basePad = parseFloat(cur) || 0
+    }
+    document.body.style.paddingBottom = (basePad + px) + 'px'
+  }
+
+  // A red line about an empty field is true until the field is filled, and
+  // then it is just something in the way at the bottom of a small screen.
+  var gapNotice = false
+  var watchingGaps = false
+  function watchGaps() {
+    gapNotice = true
+    if (watchingGaps) return
+    watchingGaps = true
+    scope().addEventListener('input', recheckGaps, true)
+    scope().addEventListener('change', recheckGaps, true)
+  }
+  function recheckGaps() {
+    if (!gapNotice || missing().length) return
+    all('[aria-invalid]', scope()).forEach(function (el) { el.removeAttribute('aria-invalid') })
+    hush()
   }
 
   // ---- the way back, for when the tunnel is not one ----
@@ -653,6 +746,7 @@ export const BRIDGE_JS = `
         if (gaps[0].focus) gaps[0].focus()
         if (gaps[0].scrollIntoView) gaps[0].scrollIntoView({ block: 'center' })
         tell('还有必填项没填。', 'bad')
+        watchGaps()
         return Promise.resolve(null)
       }
     }

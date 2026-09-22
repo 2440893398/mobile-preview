@@ -1,12 +1,40 @@
 {
-  "name": "mobile-preview",
+  "name": "mobile-preview-cli",
   "version": "0.5.3",
   "description": "Temporary authenticated preview of a local dev app, for phone-based AI workflows",
+  "keywords": [
+    "claude-code",
+    "codex",
+    "happy",
+    "mobile",
+    "preview",
+    "tunnel",
+    "cloudflared",
+    "screenshot",
+    "localhost",
+    "ai-agent"
+  ],
+  "homepage": "https://2440893398.github.io/mobile-preview/en/",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/2440893398/mobile-preview.git"
+  },
+  "bugs": {
+    "url": "https://github.com/2440893398/mobile-preview/issues"
+  },
   "type": "module",
   "bin": { "mp": "./src/bin.js" },
   "exports": {
     "./doctor": "./src/doctor.js"
   },
+  "files": [
+    "src",
+    "skill",
+    "plugins/mobile-preview",
+    "!plugins/mobile-preview/evals",
+    "LICENSE",
+    "README.md"
+  ],
   "scripts": { "test": "node --test" },
   "engines": { "node": ">=20" },
   "dependencies": { "playwright": "^1.49.0" },

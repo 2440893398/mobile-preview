@@ -2,7 +2,7 @@
 
 > See the three problems mp takes off your hands, and pick the page to read first
 
-本文件由 doc-automation 于 2026-09-20 从 publish/ 拼接生成，
+本文件由 doc-automation 于 2026-09-22 从 publish/ 拼接生成，
 共 12 个页面。每页以 "--- 页面：<路径>" 分隔。
 
 ## 给 Agent 的指令
@@ -171,7 +171,7 @@ Linux 直接写 `mp`；本手册统一写 `mp`，PowerShell 读者自行替换�
 
 ```mermaid
 flowchart LR
-  A["1 install<br/>npm install<br/>npm link"] --> B["2 check<br/>mp doctor"] --> C["3 open<br/>mp start --port"] --> D["4 on the phone<br/>the link is the password"] --> E["5 close<br/>mp stop"]
+  A["1 install<br/>npm i -g<br/>mobile-preview-cli"] --> B["2 check<br/>mp doctor"] --> C["3 open<br/>mp start --port"] --> D["4 on the phone<br/>the link is the password"] --> E["5 close<br/>mp stop"]
 ```
 
 Five steps, about ten minutes, ending in a link that opens on your phone.
@@ -186,19 +186,23 @@ Five steps, about ten minutes, ending in a link that opens on your phone.
 
 Start: a terminal you can type commands into, any working directory.
 
-1. Fetch the code: `git clone https://github.com/2440893398/mobile-preview.git`,
-   then `cd mobile-preview`.
-2. Install dependencies: `npm install`.
-3. Install the browser used for screenshots: `npx playwright install chromium`.
-4. Install the tunnel client: `winget install --id Cloudflare.cloudflared` on Windows,
+1. Install mp: `npm i -g mobile-preview-cli`.
+2. Install the browser used for screenshots: `npx playwright install chromium`.
+3. Install the tunnel client: `winget install --id Cloudflare.cloudflared` on Windows,
    `brew install cloudflared` on macOS.
-5. Put `mp` on your PATH: `npm link`.
-6. Close this terminal, **open a new one**, and run `mp doctor`.
+4. Close this terminal, **open a new one**, and run `mp doctor`.
    - Expected: four lines print `ok`, and the last line reads
      `Everything mp needs is present.` (evidence E008).
 
+The package is named `mobile-preview-cli` and the command it installs is `mp`: the name
+`mobile-preview` on npm belongs to an unrelated package.
+
 The new terminal matters: a shell fixes its executable search path at startup, so the old
-window cannot see the `mp` you just linked.
+window cannot see the `mp` you just installed.
+
+To follow the source instead (to change it, or track main), replace step 1 with
+`git clone https://github.com/2440893398/mobile-preview.git`, `cd mobile-preview`,
+`npm install`, `npm link`; the rest is the same.
 
 ## Running your first preview
 
@@ -244,7 +248,7 @@ Symptom-by-symptom fixes live in [Troubleshooting](./troubleshooting.md).
 
 ```mermaid
 flowchart LR
-  A["1 装<br/>npm install<br/>npm link"] --> B["2 验<br/>mp doctor"] --> C["3 开<br/>mp start --port"] --> D["4 手机打开<br/>链接即密码"] --> E["5 关<br/>mp stop"]
+  A["1 装<br/>npm i -g<br/>mobile-preview-cli"] --> B["2 验<br/>mp doctor"] --> C["3 开<br/>mp start --port"] --> D["4 手机打开<br/>链接即密码"] --> E["5 关<br/>mp stop"]
 ```
 
 五步，约十分钟，终点是一条手机上能打开的链接。
@@ -259,18 +263,22 @@ flowchart LR
 
 起点：一个可以执行命令的终端窗口，当前目录随意。
 
-1. 取回代码：`git clone https://github.com/2440893398/mobile-preview.git`，
-   然后 `cd mobile-preview`。
-2. 装依赖：`npm install`。
-3. 装截图用的浏览器：`npx playwright install chromium`。
-4. 装隧道程序：Windows 上 `winget install --id Cloudflare.cloudflared`，
+1. 装 mp：`npm i -g mobile-preview-cli`。
+2. 装截图用的浏览器：`npx playwright install chromium`。
+3. 装隧道程序：Windows 上 `winget install --id Cloudflare.cloudflared`，
    macOS 上 `brew install cloudflared`。
-5. 把 `mp` 装到全局：`npm link`。
-6. 关掉当前终端，**开一个新的**，执行 `mp doctor`。
+4. 关掉当前终端，**开一个新的**，执行 `mp doctor`。
    - 预期：四项都打印 `ok`，末尾一行 `Everything mp needs is present.`（证据 E008）。
+
+包名是 `mobile-preview-cli`，装好以后的命令名是 `mp`：npm 上 `mobile-preview` 这个名字
+已被另一个包占用。
 
 新终端这一步不能省：系统的可执行文件搜索路径在终端启动时就固定了，旧窗口看不见刚装好的
 `mp`。
+
+想跟着源码走（改代码或跟进 main），把第 1 步换成
+`git clone https://github.com/2440893398/mobile-preview.git`、`cd mobile-preview`、
+`npm install`、`npm link`，其余步骤不变。
 
 ## 跑通第一次预览的步骤
 
@@ -325,7 +333,7 @@ Global: `-h, --help` shows help, `mp <command> --help` shows one command's optio
 | `mp status` | List active previews and how long each has left | `--json` |
 | `mp stop` | Tear a preview down and leave nothing running | `--port` `--all` |
 | `mp doctor` | Check everything mp needs is installed, on PATH and reachable | none |
-| `mp secret ask/wait/run/status/forget` | The phone fills in credentials the AI may use but never read | `--field` `--use` `--id` |
+| `mp secret ask/wait/run/render/peek/saved/status/forget` | The phone fills in credentials the AI may use but never read; they can be saved encrypted on this computer | `--field` `--use` `--render` `--id` |
 | `mp interaction ask/wait/status/close` | Put a decision on a page, get the answer as JSON | `--html` `--id` `--timeout` |
 
 ## mp start
@@ -359,20 +367,30 @@ also stops stale and unreadable slots.
 
 ## mp secret
 
-Values exist only in each daemon's memory. `status` and `wait` report names and fingerprints,
-never values.
+By default values exist only in each daemon's memory. Tick "remember" on the phone and they are
+saved encrypted on this computer, then used at the level you picked (auto / one tap / passphrase).
+`status`, `wait` and `saved` report names and fingerprints, never values.
 
 | Subcommand | Key flags | Default | Meaning |
 |---|---|---|---|
 | `secret ask` | `--purpose <text>` | none | One line atop the form: what these values are for |
 | | `--field <NAME[:kind]>` | kind `secret` | A field to collect, repeatable. `secret` is masked and redacted from output, `text` is visible and not redacted, `multiline` is a textarea |
 | | `--use <command>` | none | A command the AI intends to run with the values, repeatable; you tick each on the phone |
-| | `--id <id>` | none | Ask an existing slot to approve more uses without re-entering values |
+| | `--render <TPL=OUT>` | none | For a tool that only reads its key from a config file: write it from a template (placeholders are `mp:NAME` in double curly braces), repeatable; you tick each on the phone, and the file is deleted when the command exits |
+| | `--render-keep <TPL=OUT>` | none | Like `--render`, but the file stays until `mp secret forget --files` |
+| | `--refill` | off | Ask for the values afresh even if they are saved for this project |
+| | `--id <id>` | none | Ask an existing slot to approve more uses or render targets without re-entering values |
 | | `--ttl <min>` | 120 | Minutes the values stay in memory once they arrive, 1 to 1440 |
 | | `--form-ttl <min>` | 30 | Minutes the form link stays open, 1 to 60 |
 | `secret wait` | `--timeout <sec>` | 540 | Seconds before giving up; the link stays open regardless |
 | `secret run` | `--cwd <dir>` | current directory | Working directory. Usage is `mp secret run [options] -- <command…>` |
+| | `--render <TPL=OUT>` | none | Write this approved config file before the command starts; delete it when the command exits |
+| `secret render` | `<TPL=OUT…>` | none | Write approved config files; deleted when the slot ends unless approved to keep |
+| `secret peek` | `<file>` | none | Show a file mp wrote, with every value redacted |
+| `secret saved` | `--all` | off | List the fields, levels, dates and remembered uses saved for this project — never values; `--all` lists every project |
 | `secret forget` | `--all` | off | Forget every slot, including stale ones |
+| | `--saved [NAME…]` | off | Delete the values saved for this project instead: all, or only the NAMEs given |
+| | `--files` | off | Delete the rendered files this project kept instead |
 
 ## mp interaction
 
@@ -410,7 +428,7 @@ cannot see it" and "only ffmpeg is missing", and prints the command that fixes e
 | Symptom | Cause | Action |
 |---|---|---|
 | Typing `mp` in PowerShell runs something else | `mp` is the built-in alias for `Move-ItemProperty` | Use `mp.cmd`, or `& mp` in a shell with the alias removed |
-| `command not found` | The shell fixed its search path at startup and cannot see a freshly linked command | Close the terminal and open a new one |
+| `command not found` | The shell fixed its search path at startup and cannot see a freshly installed command | Close the terminal and open a new one |
 | `mp doctor` reports cloudflared missing | The tunnel client is not installed | `winget install --id Cloudflare.cloudflared` on Windows, `brew install cloudflared` on macOS |
 | `mp capture` reports no browser | Playwright's Chromium is not installed | `npx playwright install chromium` |
 | `--video` produces no MP4 | ffmpeg is not on PATH | Install ffmpeg; without recording you can leave it missing |
@@ -721,7 +739,7 @@ nothing goes live, so no half-built link escapes.
 | `mp status` | 列出活跃预览与各自剩余时间 | `--json` |
 | `mp stop` | 拆掉预览，并确保没有残留进程 | `--port` `--all` |
 | `mp doctor` | 检查 mp 需要的东西是否都已安装、在 PATH 上、可达 | 无 |
-| `mp secret ask/wait/run/status/forget` | 手机填凭据，AI 可用但读不到 | `--field` `--use` `--id` |
+| `mp secret ask/wait/run/render/peek/saved/status/forget` | 手机填凭据，AI 可用但读不到；可加密保存在本机 | `--field` `--use` `--render` `--id` |
 | `mp interaction ask/wait/status/close` | 把一个决定做成页面，答案以 JSON 回来 | `--html` `--id` `--timeout` |
 
 ## mp start
@@ -755,19 +773,29 @@ nothing goes live, so no half-built link escapes.
 
 ## mp secret
 
-值只存在于各自守护进程的内存里。`status` 与 `wait` 永远只报字段名与指纹，不报值。
+值默认只在各自守护进程的内存里。你在手机上勾选「记住」后，值会加密保存在本机，下次按你选的档位
+（直接用 / 点一下 / 主密码）使用。`status`、`wait`、`saved` 永远只报字段名与指纹，不报值。
 
 | 子命令 | 关键参数 | 默认 | 说明 |
 |---|---|---|---|
 | `secret ask` | `--purpose <text>` | 无 | 表单顶部的一行说明：这些值拿来干什么 |
 | | `--field <NAME[:kind]>` | kind 为 `secret` | 要收集的字段，可重复。`secret` 掩码且从输出中脱敏，`text` 可见不脱敏，`multiline` 为文本域 |
 | | `--use <command>` | 无 | AI 打算用这些值跑的命令，可重复；由你在手机上逐条勾选 |
-| | `--id <id>` | 无 | 让已有槽位追加批准更多 `--use`，不必重新输入值 |
+| | `--render <TPL=OUT>` | 无 | 工具只认配置文件里的真值时用：从模板生成配置文件（占位符写成双花括号包住的 `mp:NAME`），可重复；由你在手机上勾选，命令跑完即删 |
+| | `--render-keep <TPL=OUT>` | 无 | 同 `--render`，但文件一直保留，直到 `mp secret forget --files` |
+| | `--refill` | 关闭 | 即使本项目保存过这些值，也重新填写 |
+| | `--id <id>` | 无 | 让已有槽位追加批准更多 `--use` / `--render`，不必重新输入值 |
 | | `--ttl <min>` | 120 | 值到达后在内存中保留的分钟数，取值 1 到 1440 |
 | | `--form-ttl <min>` | 30 | 表单链接开放的分钟数，取值 1 到 60 |
 | `secret wait` | `--timeout <sec>` | 540 | 放弃等待前的秒数；链接不受影响仍然开着 |
 | `secret run` | `--cwd <dir>` | 当前目录 | 命令的工作目录。用法是 `mp secret run [options] -- <命令…>` |
+| | `--render <TPL=OUT>` | 无 | 命令启动前写好这个已批准的配置文件，命令退出后删除 |
+| `secret render` | `<TPL=OUT…>` | 无 | 写出已批准的配置文件；槽位结束时删除，批准为保留的除外 |
+| `secret peek` | `<file>` | 无 | 显示 mp 写出的文件，其中每个值都已打码 |
+| `secret saved` | `--all` | 关闭 | 列出本机为本项目保存的字段、档位、日期与记住的用途，不含值；`--all` 列出所有项目 |
 | `secret forget` | `--all` | 关闭 | 清掉每个槽位，包括陈旧的 |
+| | `--saved [NAME…]` | 关闭 | 改为删除本项目保存的值：全部，或只删列出的名字 |
+| | `--files` | 关闭 | 改为删除本项目保留的生成文件 |
 
 ## mp interaction
 
@@ -802,7 +830,7 @@ nothing goes live, so no half-built link escapes.
 | 症状 | 原因 | 处置 |
 |---|---|---|
 | PowerShell 里敲 `mp` 执行了别的东西 | `mp` 是 `Move-ItemProperty` 的内置别名 | 改用 `mp.cmd`；或在去掉别名的 shell 里用 `& mp` |
-| `command not found` / 不是内部或外部命令 | 终端启动时就固定了搜索路径，看不见刚 `npm link` 的命令 | 关掉终端，开一个新的再试 |
+| `command not found` / 不是内部或外部命令 | 终端启动时就固定了搜索路径，看不见刚装好的 `mp` | 关掉终端，开一个新的再试 |
 | `mp doctor` 报 cloudflared 缺失 | 隧道程序没装 | Windows `winget install --id Cloudflare.cloudflared`，macOS `brew install cloudflared` |
 | `mp capture` 报浏览器缺失 | Playwright 的 Chromium 没装 | `npx playwright install chromium` |
 | `--video` 不出 MP4 | ffmpeg 不在 PATH 上 | 装 ffmpeg；不录像的话这一项可以一直缺着 |

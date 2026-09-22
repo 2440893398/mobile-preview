@@ -34,12 +34,12 @@ test('一切齐备时四项全绿', () => {
   assert.match(formatDoctor(checks, { win: false }), /Everything mp needs is present/)
 })
 
-test('CLI 根本没装：给的是 npm link，不是「重装 cloudflared」', () => {
+test('CLI 根本没装：给的是安装这个包，不是「重装 cloudflared」', () => {
   const cli = byId(checksWith({}), 'cli')
 
   assert.equal(cli.ok, false)
   assert.match(cli.detail, /not installed/)
-  assert.match(cli.fix, /npm link/)
+  assert.match(cli.fix, /mobile-preview-cli/)
 })
 
 test('CLI 装了但当前 shell 看不到：区分出来，并指向 PATH 而不是重装', () => {
@@ -52,7 +52,7 @@ test('CLI 装了但当前 shell 看不到：区分出来，并指向 PATH 而不
   assert.match(cli.detail, /linked at .*mobile-preview/)
   assert.match(cli.detail, /not resolvable on PATH/)
   assert.match(cli.fix, /PATH|new shell/i)
-  assert.doesNotMatch(cli.fix, /npm link/, '已经 link 过了，再让人 link 一次是把人往沟里带')
+  assert.doesNotMatch(cli.fix, /npm i -g/, '已经装过了，再让人装一次是把人往沟里带')
 })
 
 test('cloudflared 缺失时给出可以直接粘的安装命令', () => {

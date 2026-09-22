@@ -14,16 +14,16 @@ related:
   - ./troubleshooting.md
 source_anchors:
   - path: src/doctor.js
-    fingerprint: sha256:cf37d173b817c2e3
+    fingerprint: sha256:834ebe2efcc3fbfe
   - path: package.json
-    fingerprint: sha256:e8585805eb34a9a2
+    fingerprint: sha256:1a8daa9736f04496
 ---
 
 # Quickstart
 
 ```mermaid
 flowchart LR
-  A["1 install<br/>npm install<br/>npm link"] --> B["2 check<br/>mp doctor"] --> C["3 open<br/>mp start --port"] --> D["4 on the phone<br/>the link is the password"] --> E["5 close<br/>mp stop"]
+  A["1 install<br/>npm i -g<br/>mobile-preview-cli"] --> B["2 check<br/>mp doctor"] --> C["3 open<br/>mp start --port"] --> D["4 on the phone<br/>the link is the password"] --> E["5 close<br/>mp stop"]
 ```
 
 Five steps, about ten minutes, ending in a link that opens on your phone.
@@ -38,19 +38,23 @@ Five steps, about ten minutes, ending in a link that opens on your phone.
 
 Start: a terminal you can type commands into, any working directory.
 
-1. Fetch the code: `git clone https://github.com/2440893398/mobile-preview.git`,
-   then `cd mobile-preview`.
-2. Install dependencies: `npm install`.
-3. Install the browser used for screenshots: `npx playwright install chromium`.
-4. Install the tunnel client: `winget install --id Cloudflare.cloudflared` on Windows,
+1. Install mp: `npm i -g mobile-preview-cli`.
+2. Install the browser used for screenshots: `npx playwright install chromium`.
+3. Install the tunnel client: `winget install --id Cloudflare.cloudflared` on Windows,
    `brew install cloudflared` on macOS.
-5. Put `mp` on your PATH: `npm link`.
-6. Close this terminal, **open a new one**, and run `mp doctor`.
+4. Close this terminal, **open a new one**, and run `mp doctor`.
    - Expected: four lines print `ok`, and the last line reads
      `Everything mp needs is present.` (evidence E008).
 
+The package is named `mobile-preview-cli` and the command it installs is `mp`: the name
+`mobile-preview` on npm belongs to an unrelated package.
+
 The new terminal matters: a shell fixes its executable search path at startup, so the old
-window cannot see the `mp` you just linked.
+window cannot see the `mp` you just installed.
+
+To follow the source instead (to change it, or track main), replace step 1 with
+`git clone https://github.com/2440893398/mobile-preview.git`, `cd mobile-preview`,
+`npm install`, `npm link`; the rest is the same.
 
 ## Running your first preview
 

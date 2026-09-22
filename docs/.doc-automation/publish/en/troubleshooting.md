@@ -8,7 +8,7 @@ updated_at: 2026-09-20
 source_evidence: [E001, E003, E004, E008, E009, E011]
 source_anchors:
   - path: src/doctor.js
-    fingerprint: sha256:cf37d173b817c2e3
+    fingerprint: sha256:834ebe2efcc3fbfe
 ---
 
 # Troubleshooting
@@ -22,7 +22,7 @@ cannot see it" and "only ffmpeg is missing", and prints the command that fixes e
 | Symptom | Cause | Action |
 |---|---|---|
 | Typing `mp` in PowerShell runs something else | `mp` is the built-in alias for `Move-ItemProperty` | Use `mp.cmd`, or `& mp` in a shell with the alias removed |
-| `command not found` | The shell fixed its search path at startup and cannot see a freshly linked command | Close the terminal and open a new one |
+| `command not found` | The shell fixed its search path at startup and cannot see a freshly installed command | Close the terminal and open a new one |
 | `mp doctor` reports cloudflared missing | The tunnel client is not installed | `winget install --id Cloudflare.cloudflared` on Windows, `brew install cloudflared` on macOS |
 | `mp capture` reports no browser | Playwright's Chromium is not installed | `npx playwright install chromium` |
 | `--video` produces no MP4 | ffmpeg is not on PATH | Install ffmpeg; without recording you can leave it missing |

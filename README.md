@@ -1,34 +1,59 @@
 # mobile-preview
 
-Temporary, authenticated preview of a locally running app for phone-based AI workflows.
+**Your coding agent runs on your laptop. You are holding a phone.** `mp` is the wire
+between the two.
+
+When Claude Code or Codex is driven from a phone — through
+[Happy](https://github.com/slopus/happy), over SSH, from anywhere that is not this desk —
+it keeps answering with `http://localhost:5173`. On a phone that address *is* the phone,
+so the link is a dead end. Screenshots, passwords and "which of these three do you want"
+hit the same wall.
+
+```text
+without mp   agent ──▶ "open http://localhost:5173"   ──▶ phone: dead end
+with mp      agent ──▶ mp start --port 5173           ──▶ phone: https://<name>.trycloudflare.com/?__mp_token=...
+```
+
+Four things it hands the agent, every one of them token-gated and short-lived:
+
+| command | what arrives on the phone |
+|---|---|
+| `mp start --port 5173` | a temporary https link to the local app — `--dev` for a Vite/Webpack server |
+| `mp capture --port 5173` | a phone-sized screenshot **the agent itself** reads, with failed requests and console errors |
+| `mp secret ask` | a form for a password or API key, so it never lands in the chat transcript |
+| `mp interaction ask` | a real page for a decision, instead of a wall of options in a chat bubble |
+
+It also ships a Claude Code / Codex plugin, so the agent reaches for all of this on its
+own — the person on the phone types "看看效果" or "send me the link", not the name of a tool.
+
+## Install
+
+```bash
+npm i -g mobile-preview-cli
+npx playwright install chromium
+winget install --id Cloudflare.cloudflared   # macOS: brew install cloudflared
+mp doctor
+```
+
+`mp doctor` checks all four prerequisites separately and prints the command that fixes
+whatever is missing. In Windows PowerShell the command is `mp.cmd` — there, `mp` is the
+built-in alias for `Move-ItemProperty`. From a clone instead: `npm install && npm link`.
+
+The npm package is **`mobile-preview-cli`**; the command it installs is `mp`.
 
 ## Manual
 
 Everything about using mp lives in the manual — installation, the first preview, screenshots,
 secrets, decision pages, every flag, and troubleshooting:
 
-- **[操作手册（中文）](https://2440893398.github.io/mobile-preview/)**
 - **[Operating manual (English)](https://2440893398.github.io/mobile-preview/en/)**
+- **[操作手册（中文）](https://2440893398.github.io/mobile-preview/)**
 
 Same pages in the repository, if you prefer reading them here:
-[中文](docs/guide/index.md) · [English](docs/guide/en/index.md)
+[English](docs/guide/en/index.md) · [中文](docs/guide/index.md)
 
-This file keeps only what the manual does not cover: the shortest install path, the measured
-behaviour on mainland-China networks, why the skill triggers the way it does, and the security
-model.
-
-## Install
-
-```bash
-npm install
-npx playwright install chromium
-winget install --id Cloudflare.cloudflared   # macOS: brew install cloudflared
-npm link
-```
-
-Then open a **new** terminal and run `mp doctor`. In Windows PowerShell the command is
-`mp.cmd` — there, `mp` is the built-in alias for `Move-ItemProperty`. Step-by-step, with what
-each step should print, is in the manual's quickstart.
+The rest of this file keeps only what the manual does not cover: the measured behaviour on
+mainland-China networks, why the skill triggers the way it does, and the security model.
 
 New links use `?__mp_token=<token>`. The old `?t=<token>` form is still accepted so links
 already sent to a phone keep working, but it is no longer issued: Vite uses `?t=<timestamp>`

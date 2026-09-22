@@ -8,7 +8,7 @@ updated_at: 2026-09-20
 source_evidence: [E001, E003, E004, E008, E009, E011]
 source_anchors:
   - path: src/doctor.js
-    fingerprint: sha256:cf37d173b817c2e3
+    fingerprint: sha256:834ebe2efcc3fbfe
 ---
 
 # 排错
@@ -21,7 +21,7 @@ source_anchors:
 | 症状 | 原因 | 处置 |
 |---|---|---|
 | PowerShell 里敲 `mp` 执行了别的东西 | `mp` 是 `Move-ItemProperty` 的内置别名 | 改用 `mp.cmd`；或在去掉别名的 shell 里用 `& mp` |
-| `command not found` / 不是内部或外部命令 | 终端启动时就固定了搜索路径，看不见刚 `npm link` 的命令 | 关掉终端，开一个新的再试 |
+| `command not found` / 不是内部或外部命令 | 终端启动时就固定了搜索路径，看不见刚装好的 `mp` | 关掉终端，开一个新的再试 |
 | `mp doctor` 报 cloudflared 缺失 | 隧道程序没装 | Windows `winget install --id Cloudflare.cloudflared`，macOS `brew install cloudflared` |
 | `mp capture` 报浏览器缺失 | Playwright 的 Chromium 没装 | `npx playwright install chromium` |
 | `--video` 不出 MP4 | ffmpeg 不在 PATH 上 | 装 ffmpeg；不录像的话这一项可以一直缺着 |

@@ -14,16 +14,16 @@ related:
   - ./troubleshooting.md
 source_anchors:
   - path: src/doctor.js
-    fingerprint: sha256:cf37d173b817c2e3
+    fingerprint: sha256:834ebe2efcc3fbfe
   - path: package.json
-    fingerprint: sha256:e8585805eb34a9a2
+    fingerprint: sha256:1a8daa9736f04496
 ---
 
 # 快速上手
 
 ```mermaid
 flowchart LR
-  A["1 装<br/>npm install<br/>npm link"] --> B["2 验<br/>mp doctor"] --> C["3 开<br/>mp start --port"] --> D["4 手机打开<br/>链接即密码"] --> E["5 关<br/>mp stop"]
+  A["1 装<br/>npm i -g<br/>mobile-preview-cli"] --> B["2 验<br/>mp doctor"] --> C["3 开<br/>mp start --port"] --> D["4 手机打开<br/>链接即密码"] --> E["5 关<br/>mp stop"]
 ```
 
 五步，约十分钟，终点是一条手机上能打开的链接。
@@ -38,18 +38,22 @@ flowchart LR
 
 起点：一个可以执行命令的终端窗口，当前目录随意。
 
-1. 取回代码：`git clone https://github.com/2440893398/mobile-preview.git`，
-   然后 `cd mobile-preview`。
-2. 装依赖：`npm install`。
-3. 装截图用的浏览器：`npx playwright install chromium`。
-4. 装隧道程序：Windows 上 `winget install --id Cloudflare.cloudflared`，
+1. 装 mp：`npm i -g mobile-preview-cli`。
+2. 装截图用的浏览器：`npx playwright install chromium`。
+3. 装隧道程序：Windows 上 `winget install --id Cloudflare.cloudflared`，
    macOS 上 `brew install cloudflared`。
-5. 把 `mp` 装到全局：`npm link`。
-6. 关掉当前终端，**开一个新的**，执行 `mp doctor`。
+4. 关掉当前终端，**开一个新的**，执行 `mp doctor`。
    - 预期：四项都打印 `ok`，末尾一行 `Everything mp needs is present.`（证据 E008）。
+
+包名是 `mobile-preview-cli`，装好以后的命令名是 `mp`：npm 上 `mobile-preview` 这个名字
+已被另一个包占用。
 
 新终端这一步不能省：系统的可执行文件搜索路径在终端启动时就固定了，旧窗口看不见刚装好的
 `mp`。
+
+想跟着源码走（改代码或跟进 main），把第 1 步换成
+`git clone https://github.com/2440893398/mobile-preview.git`、`cd mobile-preview`、
+`npm install`、`npm link`，其余步骤不变。
 
 ## 跑通第一次预览的步骤
 

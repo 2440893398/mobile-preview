@@ -110,7 +110,7 @@ if (doctor) {
   console.log(onPath
     ? `MISSING  mobile-preview: ${MP_COMMAND} is on PATH at ${onPath}, but its package could not be imported`
     : `MISSING  mobile-preview: ${MP_COMMAND} is not installed`)
-  console.log('         fix: run `npm install && npm link` inside the mobile-preview checkout')
+  console.log('         fix: npm i -g mobile-preview-cli  (from a checkout: `npm install && npm link`)')
 
   const cloudflared = resolveCloudflared()
   console.log(cloudflared

@@ -33,21 +33,22 @@ skips them until they are trusted, without saying so during the session.
 
 ## Prerequisites
 
-The user must have completed the one-time setup in the mobile-preview tool
-repository:
+The user must have completed the one-time setup once, on this machine:
 
 ```powershell
-npm install
+npm i -g mobile-preview-cli
 npx playwright install chromium
 winget install --id Cloudflare.cloudflared
-npm link
 ```
+
+The npm package is `mobile-preview-cli`; the command it installs is `mp`. From a
+checkout instead: `npm install` then `npm link`.
 
 Run `mp.cmd doctor` — or the plugin's `scripts/check-prerequisites.mjs` when the
 CLI itself may be missing — before guessing at a setup problem. It reports each
 prerequisite separately with the command that fixes it, and in particular tells
-"the CLI was never linked" apart from "it is linked but this shell's PATH
-predates the link", which look identical from the outside.
+"the CLI was never installed" apart from "it is installed but this shell's PATH
+predates it", which look identical from the outside.
 
 On Windows PowerShell, use `mp.cmd` instead of `mp`: PowerShell has an `mp`
 alias for `Move-ItemProperty`. In Command Prompt, Git Bash, and other shells,
@@ -55,8 +56,23 @@ alias for `Move-ItemProperty`. In Command Prompt, Git Bash, and other shells,
 
 ## Workflow
 
+Showing a **page** — one HTML file, or a folder of built files — needs no app
+and no server of your own:
+
+```powershell
+mp.cmd start --serve .\report.html
+```
+
+mp picks a free port, serves it from inside the preview daemon, and it goes
+away when the preview does. Pass a directory when the page has siblings it
+loads; a single file is served alone, so `--serve .\docs\report.html` does not
+put the rest of `docs` on a public url. `--serve` chooses the port itself, so
+it refuses `--port`, and it serves files, so it refuses `--dev`.
+
+For a **running app** — a dev server, a backend, anything with a port already:
+
 1. Start the target app locally and confirm its port. Start it detached — see
-   *Starting the app* below.
+   *Starting the app* below — and stop it yourself when the preview ends.
 2. Run `mp.cmd start --port <port>` for a built app, or `mp.cmd start --port <port> --dev` for a Vite/Webpack development server in PowerShell.
 3. Return the printed preview URL as a **bare line of its own**. Never wrap it
    in a code block, backticks, or any other markdown: many phone clients render
@@ -117,6 +133,16 @@ returning the link. Leaving one behind is what causes the delayed replay.
 `mp` itself is safe here: the daemon is spawned detached with its stdio
 discarded, so the harness never tracks it and it expires quietly at the end of
 its TTL.
+
+**What you start, you stop.** `mp stop` ends mp's own daemon and its tunnel;
+it knows nothing about the server you started, so that one keeps its port
+forever. They pile up: seven were found listening on one machine, the oldest
+three days old, and the real cost showed up when a later preview pointed at a
+port one of them was still holding — the user opened a fresh link and was
+shown a page from a previous task. Stop yours in the same breath as
+`mp stop`, and for a plain page do not start one at all: `--serve` exists so
+there is nothing to leak. `mp.cmd status` names what each preview is serving,
+which is the fastest way to tell mp's own server from a leftover of yours.
 
 ## Frontend development
 

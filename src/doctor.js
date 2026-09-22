@@ -11,7 +11,7 @@ export const MP_COMMAND = WIN ? 'mp.cmd' : 'mp'
 // Where npm would have put a globally linked package. Used only to tell
 // "never installed" apart from "installed, but this shell cannot see it" —
 // historically reported as the same bare `missing: mp.cmd`, which sent people
-// off reinstalling cloudflared when all they needed was `npm link`.
+// off reinstalling cloudflared when all they needed was to install the package.
 export function globalNpmRoot() {
   try {
     const out = execFileSync(WIN ? 'npm.cmd' : 'npm', ['root', '-g'], {
@@ -43,9 +43,13 @@ function cliCheck(probes) {
     }
   }
 
+  // The package is published as `mobile-preview-cli`, but a checkout linked
+  // before the rename still sits under the old directory name — a machine that
+  // has it must not be told it was never installed.
   const root = probes.globalNpmRoot()
-  const linked = root ? join(root, 'mobile-preview') : null
-  if (linked && probes.exists(linked)) {
+  const candidates = root ? ['mobile-preview-cli', 'mobile-preview'].map((n) => join(root, n)) : []
+  const linked = candidates.find((p) => probes.exists(p)) ?? null
+  if (linked) {
     return {
       id: 'cli',
       label: MP_COMMAND,
@@ -64,7 +68,7 @@ function cliCheck(probes) {
     ok: false,
     optional: false,
     detail: 'not installed globally',
-    fix: 'Run `npm link` inside the mobile-preview checkout (after `npm install`).',
+    fix: 'npm i -g mobile-preview-cli  (from a clone: `npm install` then `npm link`).',
   }
 }
 

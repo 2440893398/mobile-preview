@@ -1,8 +1,9 @@
 {
-  "name": "mobile-preview-local",
-  "description": "Local marketplace for the mobile-preview plugin, installed straight from this checkout",
+  "name": "mobile-preview",
+  "description": "The mobile-preview plugin: hand a locally running app, a screenshot, a credential form or a decision page to the phone the user is actually holding.",
   "owner": {
-    "name": "mobile-preview contributors"
+    "name": "mobile-preview contributors",
+    "url": "https://github.com/2440893398/mobile-preview"
   },
   "plugins": [
     {
@@ -12,7 +13,17 @@
       "source": "./plugins/mobile-preview",
       "author": {
         "name": "mobile-preview contributors"
-      }
+      },
+      "homepage": "https://github.com/2440893398/mobile-preview",
+      "license": "MIT",
+      "keywords": [
+        "mobile",
+        "preview",
+        "tunnel",
+        "screenshot",
+        "credentials",
+        "remote-session"
+      ]
     }
   ]
 }

@@ -19,6 +19,7 @@ Four things it hands the agent, every one of them token-gated and short-lived:
 | command | what arrives on the phone |
 |---|---|
 | `mp start --port 5173` | a temporary https link to the local app — `--dev` for a Vite/Webpack server |
+| `mp start --serve ./page.html` | the same link for a page mp serves itself — no server of your own to start, or to forget |
 | `mp capture --port 5173` | a phone-sized screenshot **the agent itself** reads, with failed requests and console errors |
 | `mp secret ask` | a form for a password or API key, so it never lands in the chat transcript |
 | `mp interaction ask` | a real page for a decision, instead of a wall of options in a chat bubble |
@@ -40,6 +41,22 @@ whatever is missing. In Windows PowerShell the command is `mp.cmd` — there, `m
 built-in alias for `Move-ItemProperty`. From a clone instead: `npm install && npm link`.
 
 The npm package is **`mobile-preview-cli`**; the command it installs is `mp`.
+
+## Use it as a plugin
+
+The CLI is the tool; the plugin is what makes the agent reach for it without being asked — a
+skill whose description carries the words people actually type, and hooks that notice a phone
+session. Install the CLI first, then:
+
+```bash
+claude plugin marketplace add https://github.com/2440893398/mobile-preview
+claude plugin install mobile-preview@mobile-preview
+```
+
+Inside an interactive session the same two steps are `/plugin marketplace add ...` and
+`/plugin install ...`. Codex reads the same directory — `plugins/mobile-preview` carries a
+`.claude-plugin/` and a `.codex-plugin/` manifest — and needs its hooks trusted once, in a
+local `codex` session, before they run.
 
 ## Manual
 

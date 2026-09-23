@@ -16,7 +16,8 @@ process.env.MP_STATE_DIR = dir
 const state = await import('../src/state.js')
 const { mintInteractionId, runInteractionDaemon } = await import('../src/interaction-daemon.js')
 const {
-  formatInteractionStatus, formatInteractionWait, interactionUrl,
+  formatInteractionAsk, formatInteractionStatus, formatInteractionWait, interactionUrl,
+  localInteractionUrl,
 } = await import('../src/interaction-cli.js')
 
 const BIN = fileURLToPath(new URL('../src/bin.js', import.meta.url))
@@ -306,6 +307,28 @@ test('链接在裸行上单独一行，手机上才复制得动', () => {
   const lines = formatInteractionWait(s, { status: 'waiting', draft: null }).split('\n')
   assert.ok(lines.every((l) => l !== url || l.trim() === url))
   assert.match(url, /__mp_token=tok$/)
+})
+
+test('本机链接：同一把钥匙直连 127.0.0.1，不经隧道；端口没起来就不给', () => {
+  // 2026-09-23：人就坐在电脑前，agent 为了自己看页面起了个静态服务器，
+  // 人在预览窗格里点提交——那一份没有桥接脚本，按钮全是死的。
+  const s = {
+    id: 'i-abc123',
+    tunnelUrl: 'https://x.trycloudflare.com',
+    sessionToken: 'tok',
+    formPort: 54321,
+    formExpiresAt: Date.now() + 30 * 60_000,
+    expiresAt: Date.now() + 120 * 60_000,
+    revision: 1,
+  }
+  const local = localInteractionUrl(s)
+  assert.equal(local, 'http://127.0.0.1:54321/?__mp_token=tok')
+  const lines = formatInteractionAsk(s).split('\n')
+  // 手机链接仍排第一，本机那条单独成行、能复制。
+  assert.equal(lines[1], interactionUrl(s))
+  assert.ok(lines.includes(local))
+  assert.equal(localInteractionUrl({ ...s, formPort: null }), null)
+  assert.ok(!formatInteractionAsk({ ...s, formPort: null }).includes('127.0.0.1'))
 })
 
 test('status 的散文形态在没有问题时也说得出话', () => {

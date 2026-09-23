@@ -1,6 +1,6 @@
 {
   "name": "mobile-preview-cli",
-  "version": "0.5.3",
+  "version": "0.5.4",
   "description": "Temporary authenticated preview of a local dev app, for phone-based AI workflows",
   "keywords": [
     "claude-code",

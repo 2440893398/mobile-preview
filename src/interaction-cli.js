@@ -27,16 +27,28 @@ export function interactionUrl(s) {
   return `${s.tunnelUrl}/?${SESSION_TOKEN_QUERY_PARAM}=${s.sessionToken}`
 }
 
+// The same door without the tunnel: the form already listens on loopback, and
+// the tunnel only forwards to it. It is for the person who turns out to be
+// sitting at this machine, and for the agent's own look at the page. Without
+// it both reached for a static server and got the page without the bridge —
+// every button there, none of them doing anything (2026-09-23).
+export function localInteractionUrl(s) {
+  if (!s.formPort || !s.sessionToken) return null
+  return `http://127.0.0.1:${s.formPort}/?${SESSION_TOKEN_QUERY_PARAM}=${s.sessionToken}`
+}
+
 function minutesLeft(at, now = Date.now()) {
   return Math.max(0, Math.round((at - now) / 60_000))
 }
 
 export function formatInteractionAsk(s, { reopen = false } = {}, now = Date.now()) {
+  const local = localInteractionUrl(s)
   return [
     reopen ? `revision ${s.revision} — answer on the phone:` : 'answer on the phone:',
     // Bare line of its own, same rule as `mp start`: a link the user cannot
     // copy is a link that never arrives.
     interactionUrl(s),
+    ...(local ? ['or at this machine (browser pane, your own screenshots — never to a phone):', local] : []),
     `id: ${s.id} — the link is open for ${minutesLeft(s.formExpiresAt, now)} min; `
     + `the answer is kept for ${minutesLeft(s.expiresAt, now)} min`,
     `next: mp interaction wait --id ${s.id}`,
@@ -81,6 +93,8 @@ export function formatInteractionStatus(slots, now = Date.now(), held = []) {
     if (s.stage === 'collecting' && s.tunnelUrl && s.sessionToken) {
       lines.push(`  waiting for the phone (link open for ${minutesLeft(s.formExpiresAt, now)} more min):`)
       lines.push(interactionUrl(s))
+      const local = localInteractionUrl(s)
+      if (local) lines.push('  at this machine only:', local)
     } else if (s.stage === 'submitted') {
       lines.push(`  answered — ${s.response?.disposition}${s.deliveredAt ? ', already handed to the agent' : ', not read yet'}`)
     } else if (s.stage === 'expired_link') {
@@ -205,6 +219,7 @@ export function createInteractionCommands({
           status: 'collecting',
           id: r.s.id,
           url: interactionUrl(r.s),
+          localUrl: localInteractionUrl(r.s),
           revision: r.s.revision,
           formExpiresAt: r.s.formExpiresAt,
           expiresAt: r.s.expiresAt,
@@ -394,6 +409,7 @@ export function createInteractionCommands({
         stage: s.stage,
         revision: s.revision,
         url: s.stage === 'collecting' && s.tunnelUrl && s.sessionToken ? interactionUrl(s) : null,
+        localUrl: s.stage === 'collecting' ? localInteractionUrl(s) : null,
         draftKeys: s.draft ? Object.keys(s.draft.answers || {}) : [],
         disposition: s.response?.disposition ?? null,
         deliveredAt: s.deliveredAt ?? null,

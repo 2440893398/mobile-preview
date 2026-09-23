@@ -252,6 +252,15 @@ mp.cmd interaction wait --id i-7f3a1c
 over as a **bare line of its own**, like a preview link. `wait` blocks until the
 phone submits, then prints the answers as JSON.
 
+The page only works on the links `ask` prints: the bridge that makes
+`data-mp-submit` do anything is injected there and nowhere else. Never serve the
+file some other way — a static server, `file://`, a browser-pane launch config —
+not even to check the layout: it renders perfectly and every button on it is
+dead, and a user sitting at this machine will answer there and wait for nothing.
+Run `ask` first, then use the second link it prints, `http://127.0.0.1:…` (the
+same page without the tunnel), for your own look and for a browser pane the
+user can see. That one works only on this machine; the phone gets the first.
+
 If you cannot make the page — no shell, no way to write a file, `mp` missing —
 say so in one line and stop looking for a way round it. Then answer in the chat
 the way the page would have: three or four lines, one per option, with what it

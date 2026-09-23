@@ -48,7 +48,10 @@ it out in the chat — on a phone that is a wall of text to read and an answer t
 type, and what comes back is prose you then have to interpret. Write one
 self-contained HTML page, run `mp interaction ask --purpose "<why>" --html <file>`,
 return the printed link as a bare line, then `mp interaction wait --id <id>` and
-act on the JSON. A single yes/no stays in the chat.
+act on the JSON. A single yes/no stays in the chat. The page's buttons only work
+on the links `ask` prints — never serve the file any other way, not even to check
+the layout. For your own look, or a browser pane on this machine, use the second,
+`http://127.0.0.1:…` link it prints; the phone gets the first.
 
 If you cannot make the page — no shell, no way to write a file, `mp` missing —
 say so in one line and stop looking for a way round it. Then answer in the chat

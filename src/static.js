@@ -99,7 +99,8 @@ export function createStaticServer({ root, file = null }) {
     // nothing else exists.
     if (file) {
       if (pathname !== '/' && pathname !== `/${file}`) return send(res, 404, 'not found')
-      return serveFile(res, resolve(root, file), req.method)
+      // The one file the user named, symlink or not: naming it was the choice.
+      return serveFile(res, resolve(root, file), req.method, null)
     }
 
     const full = resolve(root, `.${pathname}`)
@@ -113,19 +114,30 @@ export function createStaticServer({ root, file = null }) {
     }
 
     if (st.isDirectory()) {
+      // `/docs` must become `/docs/` before its index is served, or every
+      // relative url in the page resolves against the parent directory and the
+      // page arrives without its styles and scripts. Relative Location, so
+      // whatever prefix the proxy in front adds stays out of it.
+      if (!pathname.endsWith('/')) {
+        const u = new URL(req.url, 'http://localhost')
+        const last = u.pathname.slice(u.pathname.lastIndexOf('/') + 1)
+        return send(res, 301, 'moved', { Location: `${last}/${u.search}` })
+      }
       const index = resolve(full, 'index.html')
       try {
         if (!statSync(index).isFile()) throw new Error('not a file')
       } catch {
         return send(res, 404, `no index.html in ${pathname}`)
       }
-      return serveFile(res, index, req.method)
+      return serveFile(res, index, req.method, root)
     }
-    return serveFile(res, full, req.method)
+    return serveFile(res, full, req.method, root)
   })
 }
 
-function serveFile(res, full, method) {
+// `root` set: the resolved file must still be inside it, so a symlink in the
+// served directory cannot hand out ~/.ssh over the tunnel.
+function serveFile(res, full, method, root) {
   let real
   let st
   try {
@@ -134,6 +146,7 @@ function serveFile(res, full, method) {
   } catch {
     return send(res, 404, 'not found')
   }
+  if (root && !within(root, real)) return send(res, 404, 'not found')
   const headers = {
     'Cache-Control': 'no-store',
     'Content-Type': typeOf(real),

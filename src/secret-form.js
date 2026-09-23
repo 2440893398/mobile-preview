@@ -211,6 +211,21 @@ const LEVEL_OPTIONS = [
   ['passphrase', '主密码', '每次用之前输一次主密码；AI 想偷得先猜中它'],
 ]
 
+// The expiry the user chose last time, as the default for saving again. Left
+// at the 90-day default, keeping a 7-day key and pressing submit re-sealed it
+// for 90 days — and a "never" key for 90 too — without anyone choosing that.
+// Several fields: the shortest wins, the same way the strictest level does.
+export function presetDays(metas) {
+  const chosen = metas.map((m) => (m.expiresAt && m.savedAt
+    ? Math.max(1, Math.round((m.expiresAt - m.savedAt) / 86_400_000))
+    : 0))
+  const finite = chosen.filter((d) => d > 0)
+  if (!finite.length) return 0
+  const want = Math.min(...finite)
+  return EXPIRY_DAYS.filter((d) => d > 0)
+    .reduce((a, b) => (Math.abs(b - want) < Math.abs(a - want) ? b : a))
+}
+
 function saveHtml(save, { preset, confirm }) {
   const hide = confirm ? ' refill-only" hidden' : '"'
   if (!save.available) {
@@ -219,7 +234,8 @@ function saveHtml(save, { preset, confirm }) {
   const level = preset?.level || DEFAULT_LEVEL
   const opts = LEVEL_OPTIONS.map(([v, t, d]) => `<label class="opt"><input type="radio" name="level" value="${v}"${v === level ? ' checked' : ''}>`
     + `<span class="opt-box"><span class="dot"></span><span><span class="opt-title">${t}</span><span class="opt-sub">${d}</span></span></span></label>`).join('')
-  const days = EXPIRY_DAYS.map((d) => `<label><input type="radio" name="days" value="${d}"${d === DEFAULT_EXPIRY_DAYS ? ' checked' : ''}>`
+  const dayPick = preset?.days ?? DEFAULT_EXPIRY_DAYS
+  const days = EXPIRY_DAYS.map((d) => `<label><input type="radio" name="days" value="${d}"${d === dayPick ? ' checked' : ''}>`
     + `<span>${d ? `${d} 天` : '不过期'}</span></label>`).join('')
   return `<section class="card${hide}>`
     + '<label class="head"><span class="grow"><span class="card-title" style="display:block">在这台电脑上记住</span>'
@@ -428,7 +444,9 @@ export function renderFormPage({
   const eyebrow = approve ? '批准新的用途' : confirm ? '使用已保存的凭证' : '填写凭证'
 
   const savedLevels = fields.map((f) => saved[f.name]?.level).filter(Boolean)
-  const preset = savedLevels.length ? { level: strictestLevel(savedLevels) } : null
+  const preset = savedLevels.length
+    ? { level: strictestLevel(savedLevels), days: presetDays(fields.map((f) => saved[f.name]).filter(Boolean)) }
+    : null
 
   const chips = [
     projectRoot ? `<span class="chip" title="${esc(projectRoot)}">${ICON.folder}<span>${esc(basename(projectRoot))}</span></span>` : '',

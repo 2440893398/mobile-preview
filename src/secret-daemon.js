@@ -288,6 +288,23 @@ export async function runSecretDaemon({
     }
   }
 
+  // Same ending as a form that expired unfilled: with the link gone and no
+  // values in, the slot has nothing left to wait for. Closing the form alone
+  // put the stage back to 'starting' and `mp secret wait` sat on it until the
+  // TTL.
+  function onLockout() {
+    closeForm('passphrase-lockout')
+    if (filled) return
+    patch({
+      stage: 'locked',
+      stageAt: Date.now(),
+      errorReason: 'passphrase-lockout',
+      error: `the passphrase was entered wrong ${MAX_PASSPHRASE_FAILURES} times and the form link was closed. `
+        + 'Run `mp secret ask` again, or `--refill` to type the values in afresh.',
+    })
+    exitOnShutdown(1)
+  }
+
   async function unlockFor(sub) {
     const needKp = sub.keep.some((n) => saved[n]?.level === 'passphrase') || sub.save?.level === 'passphrase'
     try {
@@ -299,7 +316,7 @@ export async function runSecretDaemon({
         audit('passphrase-failed', { attempt: passphraseFailures })
         const left = MAX_PASSPHRASE_FAILURES - passphraseFailures
         if (left <= 0) {
-          setTimeout(() => closeForm('passphrase-lockout'), closeDelayMs).unref?.()
+          setTimeout(onLockout, closeDelayMs).unref?.()
           throw new FormError(`主密码错了 ${MAX_PASSPHRASE_FAILURES} 次，这条链接已经失效。`, { closeForm: true })
         }
         throw new FormError(`${err.message}（还能再试 ${left} 次）`)

@@ -79,7 +79,69 @@ const VAULT_REASON = 'the vault holds credentials the user saved, encrypted, and
 
 const FILE_TOOLS = new Set(['Read', 'Edit', 'Write', 'MultiEdit', 'NotebookEdit', 'Grep'])
 
+// A glob as Grep takes it (ripgrep's --glob): `*`, `**`, `?`, `{a,b}`, and a
+// leading `!` to exclude. Enough to tell whether a file is left out of the
+// search, not a full implementation.
+function globRe(glob) {
+  let re = ''
+  let depth = 0
+  for (let i = 0; i < glob.length; i += 1) {
+    const c = glob[i]
+    if (c === '*' && glob[i + 1] === '*') {
+      re += '.*'
+      i += glob[i + 2] === '/' ? 2 : 1
+    } else if (c === '*') re += '[^/]*'
+    else if (c === '?') re += '[^/]'
+    else if (c === '{') {
+      depth += 1
+      re += '(?:'
+    } else if (c === '}' && depth) {
+      depth -= 1
+      re += ')'
+    } else if (c === ',' && depth) re += '|'
+    else re += escapeRe(c)
+  }
+  return new RegExp(`^${re}$`, WIN ? 'i' : '')
+}
+
+// Whether Grep's own filter keeps `file` (relative to the search root) out.
+// A glob with no slash matches the file name alone, as in ripgrep.
+function globExcludes(glob, rel) {
+  if (typeof glob !== 'string' || !glob.trim()) return false
+  const neg = glob.startsWith('!')
+  const g = neg ? glob.slice(1) : glob
+  const target = g.includes('/') ? rel : rel.slice(rel.lastIndexOf('/') + 1)
+  const hit = globRe(g).test(target)
+  return neg ? hit : !hit
+}
+
+// Grep is usually given a directory, or none at all and searches the working
+// directory — so a rendered file anywhere under that is in reach, and an exact
+// path match alone would never fire.
+function decideGrep(input, { cwd, files, vaultKey }) {
+  const raw = typeof input?.path === 'string' && input.path ? input.path : '.'
+  const scope = norm(isAbsolute(raw) ? raw : resolve(cwd || process.cwd(), raw)).replace(/\/$/, '')
+  const targets = [
+    { path: vaultKey, deny: () => VAULT_REASON },
+    ...files.map((f) => ({
+      path: f,
+      deny: () => `Grep: ${RENDERED_REASON(f)} Search a directory that does not contain it, `
+        + `or leave it out with glob "!${basename(f)}".`,
+    })),
+  ]
+  for (const t of targets) {
+    const p = norm(t.path)
+    let rel
+    if (p === scope) rel = p.slice(p.lastIndexOf('/') + 1)
+    else if (p.startsWith(`${scope}/`)) rel = p.slice(scope.length + 1)
+    else continue
+    if (!globExcludes(input?.glob, rel)) return { deny: t.deny() }
+  }
+  return null
+}
+
 function decideFile(tool, input, { cwd, files, vaultKey }) {
+  if (tool === 'Grep') return decideGrep(input, { cwd, files, vaultKey })
   const raw = input?.file_path ?? input?.notebook_path ?? input?.path
   if (typeof raw !== 'string' || !raw) return null
   const p = norm(isAbsolute(raw) ? raw : resolve(cwd || process.cwd(), raw))

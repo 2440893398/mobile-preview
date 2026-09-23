@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -93,4 +93,64 @@ test('路径不存在时，--serve 当场就说，而不是起一个空壳预览
     () => resolveServeTarget(join(tmpdir(), 'mp-static-does-not-exist-9ab3')),
     /no such file or directory/,
   )
+})
+
+// 注释说「realpath 之后再查一次」，代码里其实没查：根目录里一个指向 ~/.ssh
+// 的链接，就能把私钥从公网链接发出去。
+test('根目录里的符号链接指到外面：不给', async (t) => {
+  const dir = site()
+  const outside = mkdtempSync(join(tmpdir(), 'mp-static-out-'))
+  writeFileSync(join(outside, 'id_rsa'), 'PRIVATE')
+  const probes = []
+  try {
+    // junction：Windows 上不要管理员权限也建得出来
+    symlinkSync(outside, join(dir, 'data'), 'junction')
+    probes.push('/data/id_rsa')
+  } catch {
+    // 下面一起判断
+  }
+  try {
+    symlinkSync(join(outside, 'id_rsa'), join(dir, 'key.txt'), 'file')
+    probes.push('/key.txt')
+  } catch {
+    // Windows 非管理员建不了文件链接
+  }
+  if (!probes.length) {
+    t.skip('这台机器建不了符号链接')
+    return
+  }
+  await serving(resolveServeTarget(dir), async (base) => {
+    for (const p of probes) {
+      const res = await fetch(`${base}${p}`)
+      assert.equal(res.status, 404, p)
+      assert.doesNotMatch(await res.text(), /PRIVATE/)
+    }
+  })
+})
+
+test('根目录里指向里面的符号链接照常给', async (t) => {
+  const dir = site()
+  try {
+    // junction：Windows 上不要管理员权限也建得出来
+    symlinkSync(join(dir, 'sub'), join(dir, 'alias'), 'junction')
+  } catch (err) {
+    t.skip(`这台机器建不了符号链接：${err.code}`)
+    return
+  }
+  await serving(resolveServeTarget(dir), async (base) => {
+    assert.equal(await (await fetch(`${base}/alias/deep.txt`)).text(), 'deep')
+  })
+})
+
+// /docs 直接给 docs/index.html 的话，页面里的 style.css 会按 /style.css 去要。
+test('目录不带结尾斜杠：先跳到带斜杠的地址，保留查询串', async () => {
+  const dir = site()
+  mkdirSync(join(dir, 'docs'))
+  writeFileSync(join(dir, 'docs', 'index.html'), '<link href="style.css">')
+  await serving(resolveServeTarget(dir), async (base) => {
+    const res = await fetch(`${base}/docs?x=1`, { redirect: 'manual' })
+    assert.equal(res.status, 301)
+    assert.equal(new URL(res.headers.get('location'), `${base}/docs?x=1`).href, `${base}/docs/?x=1`)
+    assert.match(await (await fetch(`${base}/docs/`)).text(), /style\.css/)
+  })
 })

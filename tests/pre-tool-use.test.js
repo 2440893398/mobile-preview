@@ -242,3 +242,30 @@ test('别人的 vault.key、与 mobile-preview 无关的 DPAPI 调用都放行',
   assert.equal(withFiles(bash('ansible-vault view --vault-password-file vault.key secrets.yml')), null)
   assert.equal(withFiles(ps('[Security.Cryptography.ProtectedData]::Unprotect($b, $null, "CurrentUser")')), null)
 })
+
+// Grep 平常给的是目录，或者干脆不给路径搜 cwd——只比完整路径，这条规则就
+// 永远不会触发，一次顺手的 Grep 就把渲染出来的明文打出来了。
+test('Grep 搜的目录里有生成出来的文件被拒；glob 把它排除在外则放行', () => {
+  const cwd = process.platform === 'win32' ? 'C:\\proj' : '/proj'
+  const other = process.platform === 'win32' ? 'C:\\elsewhere' : '/elsewhere'
+  const grep = (input) => withFiles({ tool_name: 'Grep', tool_input: { pattern: 'password', ...input }, cwd })
+
+  assert.ok(grep({})?.deny, '不给 path：搜的是 cwd，文件就在里面')
+  assert.ok(grep({ path: cwd })?.deny)
+  assert.ok(grep({ path: '.' })?.deny)
+  assert.match(grep({}).deny, /!config\.yml/, '拒绝理由要告诉 AI 怎么绕开这个文件')
+  assert.ok(grep({ glob: '*.yml' })?.deny, 'glob 仍然包含它')
+  assert.ok(grep({ glob: '*.{yml,json}' })?.deny)
+
+  assert.equal(grep({ glob: '!config.yml' }), null, '用 ! 排除掉就放行')
+  assert.equal(grep({ glob: '*.js' }), null, 'glob 本来就不包含它')
+  assert.equal(grep({ glob: 'src/**' }), null)
+  assert.equal(grep({ path: other }), null, '别的目录不管')
+  assert.equal(grep({ path: `${RENDERED}.tpl` }), null, '模板照样能搜')
+})
+
+test('Grep 搜到 vault 目录被拒', () => {
+  const v = decide({ tool_name: 'Grep', tool_input: { pattern: 'blob', path: ENV.MP_STATE_DIR } }, { env: ENV, files: [] })
+  assert.ok(v?.deny)
+  assert.match(v.deny, /vault/)
+})

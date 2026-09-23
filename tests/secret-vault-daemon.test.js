@@ -241,6 +241,12 @@ test('主密码：错的返回 400 可重试，对的 filled；连错 5 次链�
     assert.match((await last.json()).error, /5 次/)
     const after = await submit(page, { uses: [], keep: ['OSS_KEY', 'BUCKET'], passphrase: 'correct horse battery' })
     assert.equal(after.status, 404, '锁定之后连对的主密码也进不来')
+    // 只关表单会把 stage 退回 starting，`mp secret wait` 就对着一个没有链接的
+    // 槽位一直等到 TTL。锁定必须像表单过期一样写下错误。
+    await until(() => state.readSecret(b.id)?.stage === 'locked')
+    const s = state.readSecret(b.id)
+    assert.equal(s.errorReason, 'passphrase-lockout')
+    assert.match(s.error, /mp secret ask/)
   } finally {
     b.handle.dispose()
   }

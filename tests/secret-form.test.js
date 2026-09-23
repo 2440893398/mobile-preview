@@ -1,7 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { hashToken, mintToken } from '../src/auth.js'
-import { createFormServer, renderFormPage } from '../src/secret-form.js'
+import { createFormServer, presetDays, renderFormPage } from '../src/secret-form.js'
 import { BROWSER_ENCRYPT_JS, decryptSubmission, generateServerKeys } from '../src/secret-crypto.js'
 
 const mpEncrypt = new Function(`${BROWSER_ENCRYPT_JS}; return mpEncrypt`)()
@@ -201,4 +201,34 @@ test('页面脚本不声明全局 status（那是 window.status，赋值会静�
     assert.doesNotMatch(html, /(?:var|let|const)\s+status\b/)
     assert.doesNotMatch(html, /[^.\w]status\.textContent/)
   }
+})
+
+// 有效期原来总默认 90 天：存了 7 天的生产密钥，下次留用它、直接提交，就被
+// 重新封成 90 天；「不过期」的也被改成 90 天。默认值要跟着上次的选择走。
+const DAY = 86_400_000
+const meta = (days, level = 'auto') => ({
+  level, status: 'saved', length: 8, sha256_8: 'abcd1234', savedAt: 1_000, expiresAt: days ? 1_000 + days * DAY : null,
+})
+
+test('presetDays：沿用上次选的有效期，多个字段取最短', () => {
+  assert.equal(presetDays([meta(7)]), 7)
+  assert.equal(presetDays([meta(0)]), 0, '不过期就还是不过期')
+  assert.equal(presetDays([meta(90), meta(7)]), 7)
+  assert.equal(presetDays([meta(0), meta(30)]), 30)
+  assert.equal(presetDays([{ ...meta(7), expiresAt: 1_000 + 8 * DAY }]), 7, '对不上的天数就近取一档')
+})
+
+test('填写页：已保存字段的有效期被预选，而不是 90 天', () => {
+  const checked = (html) => /name="days" value="(\d+)" checked/.exec(html)?.[1]
+  const page = (saved) => renderFormPage({
+    purpose: 'p',
+    mode: 'fill',
+    fields: [{ name: 'K', kind: 'secret' }, { name: 'NEW', kind: 'secret' }],
+    saved,
+    save: { available: true, passphraseSet: false },
+    publicJwk: { kty: 'EC', crv: 'P-256', x: 'x', y: 'y' },
+  })
+  assert.equal(checked(page({ K: meta(7) })), '7')
+  assert.equal(checked(page({ K: meta(0) })), '0')
+  assert.equal(checked(page({})), '90', '没保存过的还是默认 90 天')
 })

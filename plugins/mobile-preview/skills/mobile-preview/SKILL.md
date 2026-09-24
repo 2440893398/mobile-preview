@@ -27,6 +27,16 @@ anywhere in the environment — a machine that has Happy installed carries it in
 session carries none of those, so there the hook reads the process tree, in
 which the happy CLI is an ancestor.
 
+A Claude desktop app session driven from the Claude phone app is the other
+kind, and it moves: the same session is typed into at the desk, then from the
+phone, then at the desk again. Nothing in the session tells the two apart, so
+there is no notice at the top. The later hooks read the app's own record of who
+sent the latest message and, when it was the phone, apply the same rules — a
+local address in your reply, a question too large for the chat, a long
+write-up ending in a question each come back to you. That record lags the
+message by a few seconds to half a minute. If the user says they are on their
+phone, believe them over the hooks' silence.
+
 If the notice never appears in a Codex session that clearly is remote, the
 likely cause is hook trust: Codex reviews new and modified hooks at startup and
 skips them until they are trusted, without saying so during the session.
@@ -380,7 +390,10 @@ yourself is cheaper than all of them:
   a page. It only fires in a remote session.
 - A `Stop` hook catches a long message that ends in a question when no page is
   open, and asks for one. It gives up after twice in a session — if the message
-  really is not a decision for the user, say so in one line and stop.
+  really is not a decision for the user, say so in one line and stop. The same
+  hook sends back a reply that hands a phone user a localhost address.
+- The last two treat a session as remote when it started through Happy, or when
+  the latest message came from the Claude phone app.
 
 ## Safety
 

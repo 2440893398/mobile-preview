@@ -118,3 +118,67 @@ export function hasOpenInteraction(env = process.env) {
     return false
   }
 }
+
+// ---- the other way a person ends up on a phone ----
+//
+// Happy is decided once, at SessionStart, because a Happy session is a phone
+// session from its first line to its last. The Claude desktop app's own
+// remote is not: the same session is typed into at the desk, then from the
+// phone on the way out, then at the desk again. So this is asked per turn.
+//
+// Nothing the session itself can see tells the two apart. The environment is
+// the same, the transcript records a phone message exactly like a desk one,
+// and the hook payload carries no origin (checked 2026-09-24, desktop app
+// 2.7032). The one thing that flips per message is `steeredByRemoteClient` in
+// the app's own metadata for the session — true after a message from the
+// phone, false after one from the desk.
+//
+// That file is written in batches, 6–25 s after the message. So this is read
+// late in a turn — at Stop, and when a question is about to be asked — and
+// never at UserPromptSubmit, where it still describes the previous message.
+// A short turn can still see the previous value. Both ways that goes wrong are
+// cheap: a desk user gets a tunnel link that also works locally, or a phone
+// user's short turn goes unchecked — and a short turn is not a wall of text.
+
+function desktopAppDir(env) {
+  if (env.MP_CLAUDE_DESKTOP_DIR) return env.MP_CLAUDE_DESKTOP_DIR
+  if (env.APPDATA) return join(env.APPDATA, 'Claude')
+  if (env.HOME) return join(env.HOME, 'Library', 'Application Support', 'Claude')
+  return null
+}
+
+// <app>/claude-code-sessions/<account>/<org>/<host session id>.json. The id
+// comes from the environment, so it is checked before it becomes a filename.
+export function desktopSessionFile(env = process.env) {
+  const id = String(env.CLAUDE_CODE_HOST_SESSION_ID ?? '')
+  if (!/^local_[A-Za-z0-9_-]{1,120}$/.test(id)) return null
+  const app = desktopAppDir(env)
+  if (!app) return null
+  const root = join(app, 'claude-code-sessions')
+  try {
+    for (const account of readdirSync(root)) {
+      for (const org of readdirSync(join(root, account))) {
+        const f = join(root, account, org, `${id}.json`)
+        if (existsSync(f)) return f
+      }
+    }
+  } catch {
+    // Not the desktop app, or a layout this does not know: not remote.
+  }
+  return null
+}
+
+export function steeredFromPhone(env = process.env) {
+  const f = desktopSessionFile(env)
+  if (!f) return false
+  try {
+    return JSON.parse(readFileSync(f, 'utf8'))?.steeredByRemoteClient === true
+  } catch {
+    return false
+  }
+}
+
+// The question the later hooks actually ask: is the person on a phone now?
+export function isRemoteNow(mark, env = process.env) {
+  return Boolean(mark?.remote) || steeredFromPhone(env)
+}

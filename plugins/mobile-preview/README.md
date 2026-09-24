@@ -76,6 +76,16 @@ steer a must-answer question into prose instead of a tool call. Both stay
 silent in a local session, reading the verdict SessionStart already wrote to
 `sessions/<id>.json` rather than working it out again on every turn.
 
+The Claude desktop app's own remote — the phone app driving a session on this
+machine — is decided per message instead, since the same session moves between
+desk and phone. Nothing the session can see differs; the one signal is
+`steeredByRemoteClient` in the app's metadata for the session
+(`%APPDATA%\Claude\claude-code-sessions\…\<CLAUDE_CODE_HOST_SESSION_ID>.json`),
+which the app writes 6–25 seconds after the message. So it is read by the two
+late hooks only, never at the start of a turn, and when the latest message came
+from the phone the `Stop` hook also sends back a reply that hands over a
+localhost address.
+
 **Codex will not run the hook until you trust it.** New and modified hooks are
 reviewed at startup in the Codex TUI; until then they are skipped silently.
 Trust it once locally and Happy-driven Codex sessions inherit that trust.

@@ -18,6 +18,11 @@ Use `mp start` to expose the local app, `mp capture` to collect screenshots and 
   whether or not the user names the plugin; the plugin's SessionStart hook
   detects the session from `CLAUDE_CODE_EXECPATH` / `HAPPY_*`, or from the
   process tree under Codex, and says so.
+- A Claude desktop app session whose latest message came from the Claude phone
+  app. That one changes from message to message, so nothing announces it; the
+  plugin's Stop and question hooks notice it a few seconds late and send back a
+  localhost address or a wall of text. If the user says they are on the phone,
+  believe them.
 
 ## Credentials
 

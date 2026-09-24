@@ -1,7 +1,7 @@
 import process from 'node:process'
 import { pathToFileURL } from 'node:url'
 import { readPayload } from './hook-io.mjs'
-import { readMark } from './session-mark.mjs'
+import { isRemoteNow, readMark } from './session-mark.mjs'
 import { weigh } from './cjk.mjs'
 
 // The second of three triggers, and the most precise one: the model has
@@ -89,7 +89,7 @@ async function main() {
   if (!payload) return
 
   const mark = readMark(payload?.session_id)
-  const verdict = decide(payload, { remote: Boolean(mark?.remote) })
+  const verdict = decide(payload, { remote: isRemoteNow(mark) })
   if (!verdict) return
 
   process.stdout.write(`${JSON.stringify({

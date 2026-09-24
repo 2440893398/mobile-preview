@@ -9,9 +9,12 @@ import { spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import { REMOTE_CONTEXT } from '../plugins/mobile-preview/hooks/session-start.mjs'
 import { decide as askDecide, shapeOf } from '../plugins/mobile-preview/hooks/ask-question.mjs'
-import { decide as stopDecide, looksLikeAnUnansweredDecision } from '../plugins/mobile-preview/hooks/stop.mjs'
 import {
-  hasOpenInteraction, pruneMarks, readMark, sessionsDir, writeMark,
+  decide as stopDecide, handsOverLocalAddress, looksLikeAnUnansweredDecision,
+} from '../plugins/mobile-preview/hooks/stop.mjs'
+import {
+  desktopSessionFile, hasOpenInteraction, isRemoteNow, pruneMarks, readMark, sessionsDir,
+  steeredFromPhone, writeMark,
 } from '../plugins/mobile-preview/hooks/session-mark.mjs'
 import { readPayload } from '../plugins/mobile-preview/hooks/hook-io.mjs'
 import { COMMANDS, commandGroup } from '../src/usage.js'
@@ -387,6 +390,80 @@ test('hook 进程输出两个宿主都认的 block，并把次数记进会话', 
 
   const third = runHook('stop.mjs', { session_id: 's-stop', last_assistant_message: LONG }, env)
   assert.equal(third.stdout.trim(), '', '拦过两次就收手，不跟模型没完没了')
+})
+
+// ---- Claude 桌面 App 自带的远程 ----
+//
+// 2026-09-24 实测：手机从 Claude App 远程发消息，会话自己什么都看不出来；只有桌面
+// App 给这个会话记的元数据里 steeredByRemoteClient 会按消息翻转，且晚 6–25 秒写。
+
+function desktopEnv(meta, id = 'local_ac4a7092-4cc1-44af-8397-09e935769fea') {
+  const app = mkdtempSync(join(tmpdir(), 'mp-desktop-'))
+  const dir = join(app, 'claude-code-sessions', 'acct-1', 'org-1')
+  mkdirSync(dir, { recursive: true })
+  if (meta !== undefined) writeFileSync(join(dir, `${id}.json`), JSON.stringify(meta), 'utf8')
+  return { ...tempEnv(), MP_CLAUDE_DESKTOP_DIR: app, CLAUDE_CODE_HOST_SESSION_ID: id }
+}
+
+test('桌面会话：最近一条是手机发的就算远程，电脑发的就不算', () => {
+  assert.equal(steeredFromPhone(desktopEnv({ steeredByRemoteClient: true })), true)
+  assert.equal(steeredFromPhone(desktopEnv({ steeredByRemoteClient: false })), false)
+  assert.equal(steeredFromPhone(desktopEnv({})), false, '没有这个字段的老会话当本地')
+})
+
+test('找不到元数据、会话 id 不像样、文件坏了，都当本地，不能崩', () => {
+  assert.equal(steeredFromPhone(desktopEnv(undefined)), false)
+  assert.equal(steeredFromPhone({ ...desktopEnv({ steeredByRemoteClient: true }), CLAUDE_CODE_HOST_SESSION_ID: '../x' }), false)
+  assert.equal(steeredFromPhone({ ...desktopEnv({ steeredByRemoteClient: true }), CLAUDE_CODE_HOST_SESSION_ID: '' }), false)
+  const env = desktopEnv({ steeredByRemoteClient: true })
+  writeFileSync(desktopSessionFile(env), '{not json', 'utf8')
+  assert.equal(steeredFromPhone(env), false)
+  assert.equal(steeredFromPhone({ PATH: process.env.PATH }), false)
+})
+
+test('Happy 标记和桌面信号任一成立就是远程', () => {
+  const local = desktopEnv({ steeredByRemoteClient: false })
+  assert.equal(isRemoteNow({ remote: true }, local), true)
+  assert.equal(isRemoteNow(null, desktopEnv({ steeredByRemoteClient: true })), true)
+  assert.equal(isRemoteNow({ remote: false }, local), false)
+})
+
+test('桌面会话从手机发来时，Stop 和提问两道都按远程处理——哪怕 SessionStart 记的是本地', () => {
+  const env = desktopEnv({ steeredByRemoteClient: true })
+  writeMark('s-desk', { remote: false, blocks: 0 }, env)
+
+  const stop = runHook('stop.mjs', { session_id: 's-desk', last_assistant_message: LONG }, env)
+  assert.equal(stop.status, 0, stop.stderr)
+  assert.equal(JSON.parse(stop.stdout).decision, 'block')
+
+  const ask = runHook('ask-question.mjs', { session_id: 's-desk', ...bigChoice }, env)
+  assert.equal(ask.status, 0, ask.stderr)
+  assert.equal(JSON.parse(ask.stdout).hookSpecificOutput.permissionDecision, 'deny')
+})
+
+test('同一个桌面会话回到电脑上发，两道都不再管', () => {
+  const env = desktopEnv({ steeredByRemoteClient: false })
+  writeMark('s-desk2', { remote: false, blocks: 0 }, env)
+  assert.equal(runHook('stop.mjs', { session_id: 's-desk2', last_assistant_message: LONG }, env).stdout.trim(), '')
+  assert.equal(runHook('ask-question.mjs', { session_id: 's-desk2', ...bigChoice }, env).stdout.trim(), '')
+})
+
+test('人在手机上，回复里递的是 localhost 地址——拦下，让它先过 mp', () => {
+  const v = stopDecide({ last_assistant_message: '改好了，打开 http://localhost:5173/settings 看看。' }, { remote: true })
+  assert.ok(v)
+  assert.match(v.block, /mp start --port/)
+  assert.match(v.block, /carry on/, '给一条退出的路：地址可能只是配置里的一个值')
+  assert.ok(stopDecide({ last_assistant_message: '在 http://127.0.0.1:8022/ 上' }, { remote: true }))
+})
+
+test('localhost 这条：人在电脑前、同时给了隧道链接、页面开着但地址还是本地的', () => {
+  const msg = '打开 http://localhost:5173 看看'
+  assert.equal(stopDecide({ last_assistant_message: msg }, { remote: false }), null)
+  assert.equal(stopDecide({
+    last_assistant_message: `手机上点这个：\nhttps://abc-def.trycloudflare.com/?__mp_token=x\n本机是 http://127.0.0.1:6553/`,
+  }, { remote: true }), null)
+  assert.ok(stopDecide({ last_assistant_message: msg }, { remote: true, pageOpen: true }), '开着的页面不让本地地址变得能打开')
+  assert.equal(handsOverLocalAddress('监听在 localhost 上'), false, '只认可点的地址，不认单词')
 })
 
 // ---- 读取负载 ----

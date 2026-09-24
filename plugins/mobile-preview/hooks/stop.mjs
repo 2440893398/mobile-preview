@@ -1,7 +1,9 @@
 import process from 'node:process'
 import { pathToFileURL } from 'node:url'
 import { readPayload } from './hook-io.mjs'
-import { hasOpenInteraction, readMark, writeMark } from './session-mark.mjs'
+import {
+  hasOpenInteraction, isRemoteNow, readMark, writeMark,
+} from './session-mark.mjs'
 import { weigh } from './cjk.mjs'
 
 // The last of three triggers, and the only one that fires after the fact.
@@ -44,6 +46,25 @@ const REASON = 'That message asks the user to decide, and it is long enough that
   + 'JSON it prints. See the mobile-preview skill for what the page must contain. '
   + 'If this really is not a decision for them to make, say so in one line and stop.'
 
+// The other thing a phone cannot use: a local address handed over as if it
+// were a link. Before the desktop app's own remote was recognised this was
+// what a phone user got back, with nothing to stop it. A message that also
+// carries a tunnel link is handing that one over and mentioning the other.
+const LOCAL_ADDRESS = /\bhttps?:\/\/(?:localhost|127\.0\.0\.1|0\.0\.0\.0|\[::1\])(?::\d+)?/i
+const TUNNEL_LINK = /\bhttps:\/\/[a-z0-9-]+\.trycloudflare\.com\b/i
+
+const LOCAL_REASON = 'The user is on a phone right now, and that message hands them a localhost / 127.0.0.1 '
+  + 'address — on their device it points at the phone itself. Expose it first: `mp start --port <port>` '
+  + '(add `--dev` for a Vite/Webpack dev server; `mp start --serve <dir>` for plain files) and give them '
+  + 'the preview URL it prints as a bare line. For a decision page, give the first link `mp interaction ask` '
+  + 'printed, not the 127.0.0.1 one. If the address is not something for them to open — a config value, '
+  + 'a log line — carry on.'
+
+export function handsOverLocalAddress(message) {
+  const text = String(message ?? '')
+  return LOCAL_ADDRESS.test(text) && !TUNNEL_LINK.test(text)
+}
+
 export function looksLikeAnUnansweredDecision(message) {
   const text = String(message ?? '')
   if (weigh(text) <= LONG_MESSAGE) return false
@@ -59,6 +80,9 @@ export function decide(payload, {
   if (payload?.stop_hook_active) return null
   if (!remote) return null
   if (blocks >= MAX_BLOCKS) return null
+  // Checked before the open page: a page being open does not make a local
+  // address any more reachable from a phone.
+  if (handsOverLocalAddress(payload?.last_assistant_message)) return { block: LOCAL_REASON }
   // The model did open a page — the message is describing it, not replacing
   // it. These two read almost identically in the text and are opposites.
   if (pageOpen) return null
@@ -72,7 +96,7 @@ async function main() {
 
   const mark = readMark(payload?.session_id)
   const verdict = decide(payload, {
-    remote: Boolean(mark?.remote),
+    remote: isRemoteNow(mark),
     blocks: Number(mark?.blocks ?? 0),
     pageOpen: hasOpenInteraction(),
   })

@@ -200,12 +200,23 @@ function acquireLock(file, label) {
   const lockPath = `${file}.lock`
   const deadline = Date.now() + LOCK_TIMEOUT_MS
 
+  const timedOut = () => new Error(
+    `timed out waiting for the state lock on ${label} (${lockPath}). `
+    + 'Another process may have died while holding it — delete the file if so.',
+  )
+
   for (;;) {
     try {
       writeFileSync(lockPath, String(process.pid), { flag: 'wx' })
       return lockPath
     } catch (err) {
-      if (err.code !== 'EEXIST') throw err
+      // On Windows a lock its holder is deleting at this very moment is not
+      // EEXIST but EPERM (or EACCES): the file is pending delete, and nobody
+      // can open it until the last handle closes. That is the lock being
+      // released, not a permissions problem — throwing on it failed an
+      // ordinary two-writer race (seen 2026-09-24, state.test.js "Gap 3").
+      const released = process.platform === 'win32' && (err.code === 'EPERM' || err.code === 'EACCES')
+      if (err.code !== 'EEXIST' && !released) throw err
     }
 
     try {
@@ -215,16 +226,14 @@ function acquireLock(file, label) {
       }
     } catch {
       // Vanished between the failed create and this stat — its holder just
-      // released it. Loop back and try to acquire straight away.
+      // released it. Loop back and try to acquire straight away, but not
+      // forever: a lock that can neither be created nor seen is a directory
+      // this process cannot write, and that has to end in an error.
+      if (Date.now() > deadline) throw timedOut()
       continue
     }
 
-    if (Date.now() > deadline) {
-      throw new Error(
-        `timed out waiting for the state lock on ${label} (${lockPath}). `
-        + 'Another process may have died while holding it — delete the file if so.',
-      )
-    }
+    if (Date.now() > deadline) throw timedOut()
 
     sleepSync(LOCK_RETRY_MS)
   }

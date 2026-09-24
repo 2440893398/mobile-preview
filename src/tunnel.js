@@ -99,6 +99,16 @@ export function installHint() {
 // printed "stopped", and cloudflared kept serving until its TTL.
 export function killTree(pid) {
   if (!pid) return
+  // A pid that is already gone costs nothing to leave alone, and on Windows a
+  // taskkill costs ~0.4 s of a blocked event loop — the daemons call this from
+  // inside their servers, on a cloudflared that has often exited already. /T
+  // loses nothing by it: Windows cannot walk the tree of a dead root either.
+  // Only ESRCH means gone; EPERM is a process that exists and is not ours.
+  try {
+    process.kill(pid, 0)
+  } catch (err) {
+    if (err?.code === 'ESRCH') return
+  }
   try {
     // windowsHide because the daemon calls this on its way out and has no
     // console of its own — taskkill would otherwise flash one up as the last

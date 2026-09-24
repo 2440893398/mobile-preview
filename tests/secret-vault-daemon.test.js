@@ -239,8 +239,11 @@ test('主密码：错的返回 400 可重试，对的 filled；连错 5 次链�
       assert.equal(last.status, 400)
     }
     assert.match((await last.json()).error, /5 次/)
+    // 锁定后表单先答 404，closeDelayMs（这里 10 ms）之后整个服务关掉。机器一忙，
+    // 这一次提交就会落在关门之后，连接被拒——同样是「进不来」，两种都算过。
     const after = await submit(page, { uses: [], keep: ['OSS_KEY', 'BUCKET'], passphrase: 'correct horse battery' })
-    assert.equal(after.status, 404, '锁定之后连对的主密码也进不来')
+      .then((r) => r.status, (err) => err?.cause?.code ?? String(err))
+    assert.ok([404, 'ECONNREFUSED', 'ECONNRESET', 'UND_ERR_SOCKET'].includes(after), `锁定之后连对的主密码也进不来，实际得到 ${after}`)
     // 只关表单会把 stage 退回 starting，`mp secret wait` 就对着一个没有链接的
     // 槽位一直等到 TTL。锁定必须像表单过期一样写下错误。
     await until(() => state.readSecret(b.id)?.stage === 'locked')

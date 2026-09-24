@@ -12,6 +12,7 @@ import {
   isAlive,
   isOrphanedTunnel,
   isOurTunnelCommand,
+  killTree,
   parseCimProcesses,
   parsePsProcesses,
   parseTunnelReady,
@@ -653,4 +654,23 @@ test('进程表读不出来时，回收器什么都不做', () => {
     killFn: () => assert.fail('不该杀任何东西'),
   })
   assert.deepEqual(pids, [])
+})
+
+test('killTree 对已经不在的进程立刻返回，不去起 taskkill', () => {
+  // 守护进程在自己的服务里调 killTree，隧道常常早已退出。Windows 上一次同步
+  // taskkill 要阻塞事件循环约 0.4 秒；测试全量并行时几十个这样的调用挤在一起，
+  // 等表单关闭的 until 就会超时（2026-09-24，每次挂一个不同的 secret 测试）。
+  const started = Date.now()
+  for (let i = 0; i < 5; i++) killTree(999_990)
+  assert.ok(Date.now() - started < 200, `五次对死 pid 的 killTree 花了 ${Date.now() - started} ms`)
+})
+
+test('killTree 对活着的进程照杀不误', async () => {
+  const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' })
+  child.unref()
+  await new Promise((r) => child.once('spawn', r))
+  killTree(child.pid)
+  const deadline = Date.now() + 5_000
+  while (isAlive(child.pid) && Date.now() < deadline) await new Promise((r) => setTimeout(r, 50))
+  assert.equal(isAlive(child.pid), false)
 })

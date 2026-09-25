@@ -13,10 +13,11 @@ import {
   decide as stopDecide, handsOverLocalAddress, looksLikeAnUnansweredDecision,
 } from '../plugins/mobile-preview/hooks/stop.mjs'
 import {
-  desktopSessionFile, hasOpenInteraction, isRemoteNow, pruneMarks, readMark, sessionsDir,
+  desktopSessionFile, hasOpenInteraction, isRemoteNow, pruneMarks, readMark, remoteStatus, sessionsDir,
   steeredFromPhone, writeMark,
 } from '../plugins/mobile-preview/hooks/session-mark.mjs'
 import { readPayload } from '../plugins/mobile-preview/hooks/hook-io.mjs'
+import { confirmedRemoteAnswer } from '../plugins/mobile-preview/hooks/manual-confirm.mjs'
 import { COMMANDS, commandGroup } from '../src/usage.js'
 
 // 三层触发的目的只有一句话：AI 该在需要人判断的那一刻自己开页面，而不是先输出
@@ -107,6 +108,74 @@ test('会话标记能写能读，过期的读不到', () => {
   const f = join(sessionsDir(env), 's1.json')
   writeFileSync(f, JSON.stringify({ remote: true, at: Date.now() - 48 * 60 * 60_000 }), 'utf8')
   assert.equal(readMark('s1', env), null, '两天前的会话不该还在替今天的会话回答')
+
+  writeFileSync(f, JSON.stringify({ manualRemote: true, at: Date.now() - 48 * 60 * 60_000 }), 'utf8')
+  assert.equal(readMark('s1', env).manualRemote, true, '手动选择不能在活跃长会话的一天后消失')
+})
+
+test('SessionStart 恢复会话时保留用户已确认的远端选择', () => {
+  const env = tempEnv()
+  writeMark('s-resumed', { manualRemote: true, blocks: 1 }, env)
+  const resumed = runHook('session-start.mjs', { session_id: 's-resumed' }, env)
+  assert.equal(resumed.status, 0, resumed.stderr)
+  assert.equal(readMark('s-resumed', env).manualRemote, true)
+  assert.equal(remoteStatus(readMark('s-resumed', env), env).remote, true)
+})
+
+test('手动确认的远端或本机选择按会话保存，Happy 和 Claude 手机信号仍可直接判定', () => {
+  const env = tempEnv()
+  assert.deepEqual(remoteStatus(null, env), { remote: false, confirmed: false })
+  writeMark('manual', { remote: false, manualRemote: false }, env)
+  assert.deepEqual(remoteStatus(readMark('manual', env), env), { remote: false, confirmed: true })
+  writeMark('manual', { manualRemote: true }, env)
+  assert.deepEqual(remoteStatus(readMark('manual', env), env), { remote: true, confirmed: true })
+  assert.deepEqual(remoteStatus({ remote: true, manualRemote: false }, env), { remote: true, confirmed: true })
+})
+
+test('mp remote on/off 只改当前 Codex 会话的手动选择，且缺少会话 ID 时拒绝写入', () => {
+  const env = tempEnv()
+  const cli = join(ROOT, 'src', 'bin.js')
+  const run = (args, sessionId = 'codex-manual') => spawnSync(process.execPath, [cli, 'remote', ...args], {
+    env: { ...process.env, ...env, CODEX_SESSION_ID: sessionId, CODEX_THREAD_ID: sessionId },
+    encoding: 'utf8',
+  })
+
+  const on = run(['on'])
+  assert.equal(on.status, 0, on.stderr)
+  assert.equal(readMark('codex-manual', env).manualRemote, true)
+  assert.equal(readMark('codex-manual', env).awaitingManualRemote, false)
+  const off = run(['off'])
+  assert.equal(off.status, 0, off.stderr)
+  assert.equal(readMark('codex-manual', env).manualRemote, false)
+  const missing = run(['on'], '')
+  assert.notEqual(missing.status, 0)
+  assert.equal(readMark('codex-manual', env).manualRemote, false)
+})
+
+test('只接受待确认问题的明确短答，自动记住选择；其他文字不触发', () => {
+  const env = tempEnv()
+  assert.equal(confirmedRemoteAnswer('远端'), true)
+  assert.equal(confirmedRemoteAnswer('本机'), false)
+  assert.equal(confirmedRemoteAnswer('本机地址是 localhost'), null)
+
+  writeMark('s-answer', { remote: false, awaitingManualRemote: true }, env)
+  const unrelated = runHook('manual-confirm.mjs', { session_id: 's-answer', prompt: '本机地址是 localhost' }, env)
+  assert.equal(unrelated.status, 0, unrelated.stderr)
+  assert.equal(readMark('s-answer', env).manualRemote, undefined)
+
+  const reply = runHook('manual-confirm.mjs', { session_id: 's-answer', prompt: '远端' }, env)
+  assert.equal(reply.status, 0, reply.stderr)
+  assert.match(JSON.parse(reply.stdout).hookSpecificOutput.additionalContext, /confirmed remote mode/)
+  assert.equal(readMark('s-answer', env).manualRemote, true)
+  assert.equal(readMark('s-answer', env).awaitingManualRemote, false)
+
+  runHook('manual-confirm.mjs', { session_id: 's-answer', prompt: '本机' }, env)
+  assert.equal(readMark('s-answer', env).manualRemote, true, '已经确认后不被普通消息翻转')
+
+  const f = join(sessionsDir(env), 's-answer.json')
+  writeFileSync(f, JSON.stringify({ manualRemote: true, at: Date.now() - 48 * 60 * 60_000 }), 'utf8')
+  runHook('manual-confirm.mjs', { session_id: 's-answer', prompt: '继续处理' }, env)
+  assert.ok(Date.now() - readMark('s-answer', env).at < 10_000, '活跃会话每次用户发消息时续期')
 })
 
 test('会话 id 里带路径的一律拒绝，不做清洗', () => {
@@ -323,12 +392,27 @@ test('hook 进程真的会输出 deny，且带上理由', () => {
   assert.match(out.hookSpecificOutput.permissionDecisionReason, /mp interaction ask/)
 })
 
-test('没有会话标记时 hook 一声不吭——认不出是不是手机，就不该多事', () => {
+test('没有会话标记时，大问题先请用户确认一次设备', () => {
   const env = tempEnv()
   const res = runHook('ask-question.mjs', { session_id: 's-unknown', ...bigChoice }, env)
 
   assert.equal(res.status, 0, res.stderr)
-  assert.equal(res.stdout.trim(), '')
+  assert.match(JSON.parse(res.stdout).hookSpecificOutput.permissionDecisionReason, /mp remote on/)
+})
+
+test('未确认设备时，大问题先问一次；确认本机后安静，确认远端后开交互页', () => {
+  const env = tempEnv()
+  writeMark('s-choice', { remote: false }, env)
+  const input = { session_id: 's-choice', ...bigChoice }
+  const unknown = runHook('ask-question.mjs', input, env)
+  assert.equal(unknown.status, 0, unknown.stderr)
+  assert.match(JSON.parse(unknown.stdout).hookSpecificOutput.permissionDecisionReason, /mp remote on/)
+  assert.equal(readMark('s-choice', env).awaitingManualRemote, true)
+
+  writeMark('s-choice', { manualRemote: false }, env)
+  assert.equal(runHook('ask-question.mjs', input, env).stdout.trim(), '')
+  writeMark('s-choice', { manualRemote: true }, env)
+  assert.match(JSON.parse(runHook('ask-question.mjs', input, env).stdout).hookSpecificOutput.permissionDecisionReason, /mp interaction ask/)
 })
 
 // ---- 第三层：Stop 兜底 ----
@@ -365,6 +449,19 @@ test('页面已经开着时不拦——那条消息是在介绍页面，不是�
 test('本地会话不拦，已经拦过两次也不再拦', () => {
   assert.equal(stopDecide({ last_assistant_message: LONG }, { remote: false }), null)
   assert.equal(stopDecide({ last_assistant_message: LONG }, { remote: true, blocks: 2 }), null)
+})
+
+test('未确认设备时，长篇决策只要求一次人工确认', () => {
+  const env = tempEnv()
+  writeMark('s-confirm', { remote: false, blocks: 0 }, env)
+  const first = runHook('stop.mjs', { session_id: 's-confirm', last_assistant_message: LONG }, env)
+  assert.equal(first.status, 0, first.stderr)
+  assert.match(JSON.parse(first.stdout).reason, /mp remote on/)
+  assert.equal(readMark('s-confirm', env).blocks, 0, '确认问题不应耗掉决策页兜底次数')
+  assert.equal(readMark('s-confirm', env).awaitingManualRemote, true)
+
+  writeMark('s-confirm', { manualRemote: false }, env)
+  assert.equal(runHook('stop.mjs', { session_id: 's-confirm', last_assistant_message: LONG }, env).stdout.trim(), '')
 })
 
 test('stop_hook_active 时立刻让路，绝不和自己较劲', () => {
@@ -409,6 +506,12 @@ test('桌面会话：最近一条是手机发的就算远程，电脑发的就�
   assert.equal(steeredFromPhone(desktopEnv({ steeredByRemoteClient: true })), true)
   assert.equal(steeredFromPhone(desktopEnv({ steeredByRemoteClient: false })), false)
   assert.equal(steeredFromPhone(desktopEnv({})), false, '没有这个字段的老会话当本地')
+  assert.deepEqual(remoteStatus(null, desktopEnv({ steeredByRemoteClient: false })), {
+    remote: false, confirmed: true,
+  }, '明确的本机来源不该再要求手动确认')
+  assert.deepEqual(remoteStatus({ manualRemote: true }, desktopEnv({ steeredByRemoteClient: false })), {
+    remote: false, confirmed: true,
+  }, 'Claude 从手机切回本机时不能被旧的手动标记锁在远端')
 })
 
 test('找不到元数据、会话 id 不像样、文件坏了，都当本地，不能崩', () => {
@@ -457,13 +560,69 @@ test('人在手机上，回复里递的是 localhost 地址——拦下，让它
 })
 
 test('localhost 这条：人在电脑前、同时给了隧道链接、页面开着但地址还是本地的', () => {
+  const env = tempEnv()
+  mkdirSync(join(env.MP_STATE_DIR, 'previews'), { recursive: true })
+  writeFileSync(join(env.MP_STATE_DIR, 'previews', '6553.json'), JSON.stringify({
+    targetPort: 6553, tunnelUrl: 'https://abc-def.trycloudflare.com', sessionToken: 'x',
+    expiresAt: Date.now() + 60_000,
+  }))
   const msg = '打开 http://localhost:5173 看看'
-  assert.equal(stopDecide({ last_assistant_message: msg }, { remote: false }), null)
+  assert.ok(stopDecide({ last_assistant_message: msg }, { remote: false }), '设备未知或本机也要附远程可用链接')
   assert.equal(stopDecide({
     last_assistant_message: `手机上点这个：\nhttps://abc-def.trycloudflare.com/?__mp_token=x\n本机是 http://127.0.0.1:6553/`,
-  }, { remote: true }), null)
+  }, { remote: true, env }), null)
   assert.ok(stopDecide({ last_assistant_message: msg }, { remote: true, pageOpen: true }), '开着的页面不让本地地址变得能打开')
   assert.equal(handsOverLocalAddress('监听在 localhost 上'), false, '只认可点的地址，不认单词')
+})
+
+test('无令牌、错令牌、错页面或过期的隧道都不能让 localhost 交付过关', () => {
+  const env = tempEnv()
+  const dir = join(env.MP_STATE_DIR, 'previews')
+  mkdirSync(dir, { recursive: true })
+  writeFileSync(join(dir, '5173.json'), JSON.stringify({
+    targetPort: 5173, tunnelUrl: 'https://right.trycloudflare.com', sessionToken: 'correct',
+    expiresAt: Date.now() + 60_000,
+  }))
+  const local = 'http://localhost:5173/'
+  for (const remote of [
+    'https://right.trycloudflare.com/',
+    'https://right.trycloudflare.com/?__mp_token=wrong',
+    'https://other.trycloudflare.com/?__mp_token=correct',
+  ]) {
+    assert.equal(handsOverLocalAddress(`${local} ${remote}`, env), true)
+  }
+  assert.equal(handsOverLocalAddress(`${local} https://right.trycloudflare.com/?__mp_token=correct`, env), false)
+  assert.equal(handsOverLocalAddress(`${local}settings?view=all https://right.trycloudflare.com/?__mp_token=correct`, env), true)
+  assert.equal(handsOverLocalAddress(`${local}settings?view=all https://right.trycloudflare.com/settings?view=all&__mp_token=correct`, env), false)
+  assert.equal(handsOverLocalAddress(`${local} http://localhost:5174/ https://right.trycloudflare.com/?__mp_token=correct`, env), true)
+  writeFileSync(join(dir, '5173.json'), JSON.stringify({
+    targetPort: 5173, tunnelUrl: 'https://right.trycloudflare.com', sessionToken: 'correct',
+    expiresAt: Date.now() - 1,
+  }))
+  assert.equal(handsOverLocalAddress(`${local} https://right.trycloudflare.com/?__mp_token=correct`, env), true)
+})
+
+test('interaction 页面只认同一个表单端口与 token 的远程链接', () => {
+  const env = tempEnv()
+  const dir = join(env.MP_STATE_DIR, 'interactions')
+  mkdirSync(dir, { recursive: true })
+  writeFileSync(join(dir, 'i-abc123.json'), JSON.stringify({
+    formPort: 8123, tunnelUrl: 'https://decision.trycloudflare.com', sessionToken: 'answer-token',
+    expiresAt: Date.now() + 60_000,
+  }))
+  assert.equal(handsOverLocalAddress('http://127.0.0.1:8123/ https://decision.trycloudflare.com/?__mp_token=answer-token', env), false)
+  assert.equal(handsOverLocalAddress('http://127.0.0.1:8124/ https://decision.trycloudflare.com/?__mp_token=answer-token', env), true)
+})
+
+test('可打开的 localhost 链接不消耗长篇决策次数；本机会话的第三次预览也会被拦', () => {
+  const env = tempEnv()
+  writeMark('s-preview', { remote: false, manualRemote: false, blocks: 0 }, env)
+  for (let i = 0; i < 3; i += 1) {
+    const res = runHook('stop.mjs', { session_id: 's-preview', last_assistant_message: `打开 http://localhost:${5100 + i}/` }, env)
+    assert.equal(res.status, 0, res.stderr)
+    assert.match(JSON.parse(res.stdout).reason, /mp start --port/)
+  }
+  assert.equal(readMark('s-preview', env).blocks, 0)
 })
 
 // ---- 读取负载 ----
@@ -501,11 +660,14 @@ test('hooks.json 把两个新触发挂在对的事件上，指向真实存在的
   assert.match(stop.hooks[0].command, /stop\.mjs/)
   assert.match(stop.hooks[0].command, /\$\{CLAUDE_PLUGIN_ROOT\}/)
 
+  const confirm = hooks.hooks.UserPromptSubmit[0]
+  assert.match(confirm.hooks[0].command, /manual-confirm\.mjs/)
+
   // 原来那条 Bash|PowerShell 的 deny 不能被挤掉。
   const secret = hooks.hooks.PreToolUse.find((e) => /pre-tool-use/.test(e.hooks[0].command))
   assert.equal(secret.matcher, 'Bash|PowerShell')
 
-  for (const file of ['ask-question.mjs', 'stop.mjs', 'session-mark.mjs', 'hook-io.mjs']) {
+  for (const file of ['ask-question.mjs', 'stop.mjs', 'manual-confirm.mjs', 'session-mark.mjs', 'hook-io.mjs']) {
     assert.ok(existsSync(join(HOOKS, file)), `hooks.json 指向的 ${file} 必须存在`)
   }
 })

@@ -11,6 +11,12 @@ HTTP port, then use that port with `mp`.
 
 ## Remote sessions
 
+A page meant for the user to open must always have an `mp start` or
+`mp interaction ask` link, even when the user is currently at this computer.
+The same conversation may later be opened on a phone. A localhost URL may be
+included as an extra local link, but never as the only preview link. The Stop
+hook catches a lone user-facing localhost URL regardless of session mode.
+
 A session started through Happy is a phone session: the person asking is not at
 this machine, so `http://localhost:<port>` is not an answer they can act on — on
 their device that address is the phone. In such a session this workflow is not
@@ -27,15 +33,27 @@ anywhere in the environment — a machine that has Happy installed carries it in
 session carries none of those, so there the hook reads the process tree, in
 which the happy CLI is an ancestor.
 
-A Claude desktop app session driven from the Claude phone app is the other
+A Claude desktop app session driven from the Claude phone app is another
 kind, and it moves: the same session is typed into at the desk, then from the
 phone, then at the desk again. Nothing in the session tells the two apart, so
 there is no notice at the top. The later hooks read the app's own record of who
 sent the latest message and, when it was the phone, apply the same rules — a
-local address in your reply, a question too large for the chat, a long
-write-up ending in a question each come back to you. That record lags the
+question too large for the chat or a long write-up ending in a question comes
+back to you. That record lags the
 message by a few seconds to half a minute. If the user says they are on their
 phone, believe them over the hooks' silence.
+
+Codex Remote does not expose a reliable sender marker to these hooks. When a
+substantial decision needs the user's response and this session has no known
+mode, ask one short question in chat: "Are you using this session from a phone
+or other remote device? Reply 远端 or 本机." The UserPromptSubmit hook records
+either exact reply for this session. If it did not run, use `mp remote on` for
+远端 or `mp remote off` for 本机 (on Windows PowerShell, `mp.cmd`). The choice
+is used by later decision hooks. If the user later says they switched devices,
+run `mp remote on/off` again for this same session. Do not infer the answer from `client_id`, a
+paired device, or whether the desktop app is in the foreground.
+The choice is refreshed when the user sends a message; it expires after 30 days
+of inactivity, so a much older resumed session asks again.
 
 If the notice never appears in a Codex session that clearly is remote, the
 likely cause is hook trust: Codex reviews new and modified hooks at startup and
@@ -387,13 +405,16 @@ yourself is cheaper than all of them:
 - The `SessionStart` context states the rule above in a remote session.
 - A `PreToolUse` hook refuses a question tool call carrying three explained
   options, or two substantial questions, or one long one, and tells you to use
-  a page. It only fires in a remote session.
+  a page in a known remote session. If the mode is unknown, it asks for the
+  one-time confirmation first.
 - A `Stop` hook catches a long message that ends in a question when no page is
-  open, and asks for one. It gives up after twice in a session — if the message
+  open, and asks for one after confirming an unknown mode. It gives up after
+  twice in a session — if the message
   really is not a decision for the user, say so in one line and stop. The same
-  hook sends back a reply that hands a phone user a localhost address.
+  hook sends back any reply that hands over localhost as the only preview link.
 - The last two treat a session as remote when it started through Happy, or when
-  the latest message came from the Claude phone app.
+  the latest message came from the Claude phone app, or after a user-confirmed
+  `mp remote on`.
 
 ## Safety
 

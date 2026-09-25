@@ -3,22 +3,29 @@ import {
 } from 'node:fs'
 import { join } from 'node:path'
 
-// What the three triggers share: one note per session, written once by
-// SessionStart, read by the two hooks that fire afterwards.
+// What the triggers share: one note per session, initialized by SessionStart
+// and updated when the user confirms whether this session is remote.
 //
 // The note exists because detection is not free. Working out whether the
 // person is on a phone costs a process-tree walk on the host that cannot
 // answer from its environment, and about a second of PowerShell on Windows.
 // SessionStart pays that once; a hook that fires on every turn must not pay
-// it at all. No note means "not a phone session, or we never found out", and
-// both of those mean the same thing here: stay quiet.
+// it at all. No note means we have not established a remote mode yet.
 //
 // Deliberately duplicated rather than imported from src/state.js: when this
 // plugin is installed on its own, that file is not there.
 
 const MAX_AGE_MS = 24 * 60 * 60_000
+// A confirmed choice is refreshed on user prompts, so a task used over many
+// days keeps it. Abandoned tasks expire after a month rather than forever.
+const MANUAL_MAX_AGE_MS = 30 * MAX_AGE_MS
 
-function stateDir(env = process.env) {
+function isFresh(mark) {
+  const maxAge = typeof mark?.manualRemote === 'boolean' ? MANUAL_MAX_AGE_MS : MAX_AGE_MS
+  return Boolean(mark?.at) && Date.now() - mark.at <= maxAge
+}
+
+export function stateDir(env = process.env) {
   return env.MP_STATE_DIR
     || join(env.LOCALAPPDATA || env.HOME || process.cwd(), 'mobile-preview')
 }
@@ -41,7 +48,7 @@ export function readMark(sessionId, env = process.env) {
   if (!f || !existsSync(f)) return null
   try {
     const mark = JSON.parse(readFileSync(f, 'utf8'))
-    if (!mark?.at || Date.now() - mark.at > MAX_AGE_MS) return null
+    if (!isFresh(mark)) return null
     return mark
   } catch {
     return null
@@ -77,7 +84,7 @@ export function pruneMarks(env = process.env) {
       const f = join(dir, name)
       try {
         const mark = JSON.parse(readFileSync(f, 'utf8'))
-        if (mark?.at && Date.now() - mark.at <= MAX_AGE_MS) continue
+        if (isFresh(mark)) continue
       } catch {
         // Unreadable is as good as expired.
       }
@@ -168,17 +175,36 @@ export function desktopSessionFile(env = process.env) {
   return null
 }
 
-export function steeredFromPhone(env = process.env) {
+export function desktopSteeringStatus(env = process.env) {
   const f = desktopSessionFile(env)
-  if (!f) return false
+  if (!f) return null
   try {
-    return JSON.parse(readFileSync(f, 'utf8'))?.steeredByRemoteClient === true
+    const value = JSON.parse(readFileSync(f, 'utf8'))?.steeredByRemoteClient
+    return typeof value === 'boolean' ? value : null
   } catch {
-    return false
+    return null
   }
 }
 
-// The question the later hooks actually ask: is the person on a phone now?
+export function steeredFromPhone(env = process.env) {
+  return desktopSteeringStatus(env) === true
+}
+
+// A human can confirm the mode once for this session when Codex cannot tell
+// who sent a message. Explicit local confirmation silences the question, but
+// never overrides a live Happy or Claude phone signal.
+export function remoteStatus(mark, env = process.env) {
+  const desktop = desktopSteeringStatus(env)
+  if (mark?.remote) return { remote: true, confirmed: true }
+  // Claude desktop reports both directions per message. A stale manual choice
+  // must not keep it remote after that host reports a local message.
+  if (desktop !== null) return { remote: desktop, confirmed: true }
+  return {
+    remote: mark?.manualRemote === true,
+    confirmed: typeof mark?.manualRemote === 'boolean',
+  }
+}
+
 export function isRemoteNow(mark, env = process.env) {
-  return Boolean(mark?.remote) || steeredFromPhone(env)
+  return remoteStatus(mark, env).remote
 }

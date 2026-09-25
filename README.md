@@ -124,9 +124,8 @@ concrete words a user says — "on my phone", "看看效果", "screenshot", "预
 "localhost 打不开" — instead of describing the tool. That works in every session,
 local or remote, with nothing installed.
 
-The second is a `SessionStart` hook (`plugins/mobile-preview/hooks/`), for the
-case where the user does not ask at all and a local URL is about to be handed
-over anyway. When the session was started through Happy it tells the model,
+The second is a `SessionStart` hook (`plugins/mobile-preview/hooks/`). When the
+session was started through Happy it tells the model,
 once, at the top of the conversation: this person is not at this machine, a
 local address is not a deliverable, expose it with `mp start` and return the
 preview link instead. In a local session the hook prints nothing. One file
@@ -154,7 +153,7 @@ Two things to know about Codex specifically:
 - **Hooks do not run until they are trusted.** Codex reviews new and modified
   hooks at startup in the TUI ("Hooks need review… Trust all and continue"), and
   silently skips them otherwise — which looks exactly like a broken hook. Trust
-  it once in a local `codex` session and Happy-driven sessions inherit it.
+  the current plugin hook definitions in a local `codex` session.
   `codex exec --dangerously-bypass-hook-trust` skips the gate for automation.
 - The process-tree walk stops at the first ancestor that has already exited.
   Normal spawn chains stay intact; a shell that emulates `exec` by respawning
@@ -173,8 +172,8 @@ goes on a page. That is the cheap one — one paragraph, once per session — an
 the only one that acts *before* the tokens are spent.
 
 A **PreToolUse** hook on `AskUserQuestion` / `request_user_input` catches the
-question at the precise moment the model asks it, and denies it with the
-instruction to use a page. It measures shape, never subject: three or more
+question at the precise moment the model asks it. It measures shape, never
+subject: three or more
 options each carrying a sentence of explanation, or two substantial questions
 at once, or one long one. A hook cannot tell whether a decision is important,
 and one that guessed would be wrong in both directions.
@@ -197,14 +196,16 @@ that has already been answered does not count: it outlives the answer by its
 whole TTL, and counting it would silence this hook for the rest of the
 afternoon. Those tokens are already spent, which is why it is third; it gives
 up after twice in a session rather than arguing with a model that has a reason
-to write that way.
+to write that way. When the session mode is unknown, either decision hook first
+asks the user one short question. An exact `远端` or `本机` reply is saved by a
+`UserPromptSubmit` hook; `mp remote on/off` also saves the choice. Only a
+confirmed remote choice causes large decisions to move to `mp interaction`.
 
-All three stay silent in a local session, where the host's own prompt in the
-terminal is already a good answer. Working that out costs a process-tree walk
-on the host whose environment cannot say, so SessionStart does it once and
-writes the verdict to `%LOCALAPPDATA%\mobile-preview\sessions\<id>.json`; the
-other two read it. No note means "not a phone session, or we never found out",
-and both of those mean stay quiet.
+For preview links the rule is simpler: a localhost page is never the only link
+handed to the user. Stop requests an `mp start` link regardless of the device,
+while allowing an additional local link. Preview checks do not consume the
+two-attempt budget for long decisions. Happy detection and the manual choice
+share `%LOCALAPPDATA%\mobile-preview\sessions\<id>.json`.
 
 Plugin caches key on the version, so a `hooks/` or skill change only reaches the
 host after the version in the four manifests is bumped.

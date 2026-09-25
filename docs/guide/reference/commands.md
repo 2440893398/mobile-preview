@@ -4,11 +4,11 @@ description: 查 mp 每条命令的参数、默认值与取值范围，以及插
 doc_type: reference
 module: 参考
 audience: 已经上手、需要查参数的使用者
-updated_at: 2026-09-20
+updated_at: 2026-09-25
 source_evidence: [E002, E012]
 source_anchors:
   - path: src/usage.js
-    fingerprint: sha256:4a1b564592bd5b27
+    fingerprint: sha256:1196db8efe2116bc
 ---
 
 # 命令速查
@@ -28,6 +28,7 @@ source_anchors:
 | `mp status` | 列出活跃预览与各自剩余时间 | `--json` |
 | `mp stop` | 拆掉预览，并确保没有残留进程 | `--port` `--all` |
 | `mp doctor` | 检查 mp 需要的东西是否都已安装、在 PATH 上、可达 | 无 |
+| `mp remote on/off/status` | 记住当前 Codex 会话经用户确认的远端或本机选择 | `--session` |
 | `mp secret ask/wait/run/render/peek/saved/status/forget` | 手机填凭据，AI 可用但读不到；可加密保存在本机 | `--field` `--use` `--render` `--id` |
 | `mp interaction ask/wait/status/close` | 把一个决定做成页面，答案以 JSON 回来 | `--html` `--id` `--timeout` |
 
@@ -60,6 +61,19 @@ source_anchors:
 
 `mp status` 的 `--json` 与 `mp stop` 的 `--port` / `--all` 语义同上；`--all` 会把陈旧和
 读不出来的槽位一并停掉。
+
+## mp remote
+
+| 子命令 | 参数 | 默认 | 说明 |
+|---|---|---|---|
+| `remote on` | `--session <id>` | 当前 `CODEX_SESSION_ID` | 用户确认从手机等远端操作后，记住当前会话应使用远端交互 |
+| `remote off` | `--session <id>` | 当前 `CODEX_SESSION_ID` | 用户确认在本机操作后，记住当前会话的选择 |
+| `remote status` | `--session <id>` | 当前 `CODEX_SESSION_ID` | 查看当前会话是否已有手动选择 |
+
+插件遇到大问题而不知道设备时，会先请用户只回答「远端」或「本机」；
+`UserPromptSubmit` hook 记录这个明确回答。hook 未运行时，AI 可在得到用户回答后
+执行 `mp remote on/off`。预览链接不依赖这个选择：交给用户打开的本地页面始终附
+可从其他设备打开的链接。手动选择随用户消息续期，连续 30 天不用后失效。
 
 ## mp secret
 

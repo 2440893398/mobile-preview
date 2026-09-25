@@ -4,11 +4,11 @@ description: Look up every mp flag, its default and its range, plus where to ins
 doc_type: reference
 module: Reference
 audience: Users past the first run who need a flag
-updated_at: 2026-09-20
+updated_at: 2026-09-25
 source_evidence: [E002, E012]
 source_anchors:
   - path: src/usage.js
-    fingerprint: sha256:4a1b564592bd5b27
+    fingerprint: sha256:1196db8efe2116bc
 ---
 
 # Command reference
@@ -29,6 +29,7 @@ Global: `-h, --help` shows help, `mp <command> --help` shows one command's optio
 | `mp status` | List active previews and how long each has left | `--json` |
 | `mp stop` | Tear a preview down and leave nothing running | `--port` `--all` |
 | `mp doctor` | Check everything mp needs is installed, on PATH and reachable | none |
+| `mp remote on/off/status` | Remember the user's remote or local choice for this Codex session | `--session` |
 | `mp secret ask/wait/run/render/peek/saved/status/forget` | The phone fills in credentials the AI may use but never read; they can be saved encrypted on this computer | `--field` `--use` `--render` `--id` |
 | `mp interaction ask/wait/status/close` | Put a decision on a page, get the answer as JSON | `--html` `--id` `--timeout` |
 
@@ -61,6 +62,21 @@ Usage is `mp capture [url] [options]`; without a url it shoots the preview root.
 
 `--json` on `mp status` and `--port` / `--all` on `mp stop` mean the same as above; `--all`
 also stops stale and unreadable slots.
+
+## mp remote
+
+| Subcommand | Flag | Default | Meaning |
+|---|---|---|---|
+| `remote on` | `--session <id>` | current `CODEX_SESSION_ID` | Remember that the user confirmed they are on a phone or another remote device |
+| `remote off` | `--session <id>` | current `CODEX_SESSION_ID` | Remember that the user confirmed they are at this computer |
+| `remote status` | `--session <id>` | current `CODEX_SESSION_ID` | Show the manual choice for this session |
+
+When a substantial decision needs a device choice, the plugin asks for the exact
+reply `远端` or `本机` and its `UserPromptSubmit` hook records it. If that hook
+did not run, the AI can run `mp remote on/off` after the answer. Preview links
+do not depend on this choice: a local page offered to the user always gets a
+link that works from another device. User messages refresh the choice; it
+expires after 30 days of inactivity.
 
 ## mp secret
 

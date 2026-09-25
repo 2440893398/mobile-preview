@@ -17,6 +17,7 @@ import { LOCALHOST_HARDCODE_HINT, formatDoctor, runChecks } from './doctor.js'
 import { resolveServeTarget } from './static.js'
 import { createSecretCommands } from './secret-cli.js'
 import { createInteractionCommands } from './interaction-cli.js'
+import { readMark, writeMark } from '../plugins/mobile-preview/hooks/session-mark.mjs'
 
 // Covers daemon process startup, the proxy's listen() before it even calls
 // startTunnel, and the final state-file write — none of which are part of
@@ -861,6 +862,27 @@ function cmdDoctor(args) {
   if (checks.some((c) => !c.ok && !c.optional)) process.exit(1)
 }
 
+function cmdRemote(args, command) {
+  const parsed = parseArgs(args, `remote ${command}`)
+  if (parsed.help) return console.log(renderCommandHelp(`remote ${command}`))
+
+  const sessionId = parsed.session || process.env.CODEX_SESSION_ID || process.env.CODEX_THREAD_ID
+  if (!sessionId) fail('No Codex session ID. Run this inside the Codex session or pass --session <id>.')
+  if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(sessionId) || sessionId.includes('..')) {
+    fail('Invalid session ID.')
+  }
+
+  if (command === 'status') {
+    const manual = readMark(sessionId)?.manualRemote
+    note(manual === true ? 'remote confirmed' : manual === false ? 'local confirmed' : 'not confirmed')
+    return
+  }
+
+  const manualRemote = command === 'on'
+  if (!writeMark(sessionId, { manualRemote, awaitingManualRemote: false })) fail('Could not save this session choice.')
+  note(manualRemote ? 'remote confirmed for this session' : 'local confirmed for this session')
+}
+
 export async function main(argv) {
   const [cmd, ...rest] = argv
 
@@ -919,6 +941,11 @@ const groupDeps = {
   note, emitJson, fail, parseArgs, numericFlag, here: HERE, tunnelWaitBudgetMs,
 }
 const groupCommands = {
+  remote: {
+    on: (args) => cmdRemote(args, 'on'),
+    off: (args) => cmdRemote(args, 'off'),
+    status: (args) => cmdRemote(args, 'status'),
+  },
   secret: createSecretCommands(groupDeps),
   interaction: createInteractionCommands(groupDeps),
 }

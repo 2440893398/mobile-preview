@@ -1,7 +1,7 @@
 import process from 'node:process'
 import { pathToFileURL } from 'node:url'
 import { readPayload } from './hook-io.mjs'
-import { isRemoteNow, readMark } from './session-mark.mjs'
+import { readMark, remoteStatus, writeMark } from './session-mark.mjs'
 import { weigh } from './cjk.mjs'
 
 // The second of three triggers, and the most precise one: the model has
@@ -37,6 +37,14 @@ const REASON = 'This question is large enough that answering it in the chat mean
   + 'then `mp interaction wait --id <id>` and act on the JSON it prints. '
   + 'See the mobile-preview skill for what the page must contain.'
 
+const CONFIRM_REASON = 'Before presenting this large decision, ask one short question in chat: '
+  + '"Are you using this session from a phone or other remote device? Reply 远端 or 本机." '
+  + 'End the turn after asking; do not use an asynchronous question tool, so the answer starts a new turn. '
+  + 'The UserPromptSubmit hook remembers either exact reply for this session. If it does not, '
+  + 'run `mp remote on` for 远端 or `mp remote off` for 本机. '
+  + 'The choice is remembered for this session. Then present the decision: use `mp interaction ask` '
+  + 'if remote, or the normal chat question if local. Do not infer the device from this prompt.'
+
 function strings(value, depth = 0) {
   if (depth > 4) return []
   if (typeof value === 'string') return [value]
@@ -67,10 +75,7 @@ export function shapeOf(input) {
   }
 }
 
-export function decide({ tool_name: tool, tool_input: input } = {}, { remote = false } = {}) {
-  // A person at this machine has a working answer already: the host's own
-  // prompt, in the terminal they are looking at.
-  if (!remote) return null
+export function decide({ tool_name: tool, tool_input: input } = {}, { remote = false, confirmed = true } = {}) {
   if (!/^(AskUserQuestion|request_user_input(_async)?)$/.test(String(tool ?? ''))) return null
 
   const s = shapeOf(input)
@@ -81,6 +86,8 @@ export function decide({ tool_name: tool, tool_input: input } = {}, { remote = f
   const tooMuchToRead = s.load > LONG
   if (!tooMuchToCompare && !tooManyAtOnce && !tooMuchToRead) return null
 
+  if (!confirmed) return { deny: CONFIRM_REASON, shape: s, kind: 'confirm' }
+  if (!remote) return null
   return { deny: REASON, shape: s }
 }
 
@@ -89,8 +96,10 @@ async function main() {
   if (!payload) return
 
   const mark = readMark(payload?.session_id)
-  const verdict = decide(payload, { remote: isRemoteNow(mark) })
+  const verdict = decide(payload, remoteStatus(mark))
   if (!verdict) return
+
+  if (verdict.kind === 'confirm') writeMark(payload.session_id, { awaitingManualRemote: true })
 
   process.stdout.write(`${JSON.stringify({
     hookSpecificOutput: {

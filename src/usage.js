@@ -73,6 +73,21 @@ export const COMMANDS = {
       json: { help: 'Print a machine-readable JSON array on stdout instead of prose' },
     },
   },
+  'remote on': {
+    summary: 'Remember that this Codex session needs remote-friendly interaction links',
+    args: '', maxPositionals: 0,
+    flags: { session: { value: '<id>', help: 'Session ID (default: CODEX_SESSION_ID)' } },
+  },
+  'remote off': {
+    summary: 'Remember that this Codex session is being used locally',
+    args: '', maxPositionals: 0,
+    flags: { session: { value: '<id>', help: 'Session ID (default: CODEX_SESSION_ID)' } },
+  },
+  'remote status': {
+    summary: 'Show the manual remote choice for this Codex session',
+    args: '', maxPositionals: 0,
+    flags: { session: { value: '<id>', help: 'Session ID (default: CODEX_SESSION_ID)' } },
+  },
   // The `secret` group: credentials the phone fills in and the AI may use
   // but never read. Keyed as "secret <sub>" so parseArgs and --help treat a
   // subcommand exactly like a top-level command; main() joins the two words.
@@ -205,6 +220,7 @@ export const COMMANDS = {
 // What `mp <group> --help` says the group is for. A group with no entry here
 // is not a group: main() uses this to decide whether a first word is one.
 export const GROUPS = {
+  remote: 'remember a user-confirmed remote or local choice for this Codex session',
   secret: 'credentials the phone fills in; the AI may use them but never read them',
   interaction: 'a decision the user makes on a page; the answer comes back as JSON',
 }

@@ -23,7 +23,13 @@ export function rememberConfirmation(payload, env = process.env) {
   }
   if (!mark?.awaitingManualRemote) return null
   const manualRemote = confirmedRemoteAnswer(payload?.prompt)
-  if (manualRemote === null) return null
+  // The question ends the turn, so the very next message is the answer or it
+  // is not coming. Left pending, a bare "local" typed hours later for some
+  // other reason would be recorded as this session's device for a month.
+  if (manualRemote === null) {
+    writeMark(sessionId, { awaitingManualRemote: false }, env)
+    return null
+  }
   return writeMark(sessionId, { manualRemote, awaitingManualRemote: false }, env)
 }
 

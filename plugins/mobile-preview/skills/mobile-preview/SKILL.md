@@ -11,11 +11,12 @@ HTTP port, then use that port with `mp`.
 
 ## Remote sessions
 
-A page meant for the user to open must always have an `mp start` or
-`mp interaction ask` link, even when the user is currently at this computer.
-The same conversation may later be opened on a phone. A localhost URL may be
-included as an extra local link, but never as the only preview link. The Stop
-hook catches a lone user-facing localhost URL regardless of session mode.
+A page meant for the user to open must have an `mp start` or
+`mp interaction ask` link unless the session is known to be at this computer
+(the Claude desktop app says the latest message came from the desk, or the
+user answered 本机). A localhost URL may be included as an extra local link,
+but never as the only preview link. The Stop hook catches a lone user-facing
+localhost URL in any session not known to be local.
 
 A session started through Happy is a phone session: the person asking is not at
 this machine, so `http://localhost:<port>` is not an answer they can act on — on
@@ -406,12 +407,14 @@ yourself is cheaper than all of them:
 - A `PreToolUse` hook refuses a question tool call carrying three explained
   options, or two substantial questions, or one long one, and tells you to use
   a page in a known remote session. If the mode is unknown, it asks for the
-  one-time confirmation first.
+  confirmation first — at most twice per session across both hooks, then it
+  stops asking.
 - A `Stop` hook catches a long message that ends in a question when no page is
   open, and asks for one after confirming an unknown mode. It gives up after
   twice in a session — if the message
   really is not a decision for the user, say so in one line and stop. The same
-  hook sends back any reply that hands over localhost as the only preview link.
+  hook sends back any reply that hands over localhost as the only preview link,
+  unless the session is known to be local.
 - The last two treat a session as remote when it started through Happy, or when
   the latest message came from the Claude phone app, or after a user-confirmed
   `mp remote on`.

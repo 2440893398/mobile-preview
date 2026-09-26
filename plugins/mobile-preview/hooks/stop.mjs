@@ -4,7 +4,7 @@ import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { readPayload } from './hook-io.mjs'
 import {
-  hasOpenInteraction, readMark, remoteStatus, stateDir, writeMark,
+  confirmReason, hasOpenInteraction, readMark, recordConfirmAsk, remoteStatus, stateDir, writeMark,
 } from './session-mark.mjs'
 import { weigh } from './cjk.mjs'
 
@@ -48,12 +48,22 @@ const REASON = 'That message asks the user to decide, and it is long enough that
   + 'JSON it prints. See the mobile-preview skill for what the page must contain. '
   + 'If this really is not a decision for them to make, say so in one line and stop.'
 
-// A user-facing local address must never be the only preview link. The agent
-// cannot reliably tell whether a Codex prompt came from the phone, so every
-// device gets a remote-capable link when a page is being handed over. A reply
-// that already includes the tunnel link may mention localhost too.
-const LOCAL_ADDRESS = /\bhttps?:\/\/(?:localhost|127\.0\.0\.1|0\.0\.0\.0|\[::1\])(?::\d+)?[^\s<>()]*/gi
-const REMOTE_ADDRESS = /https:\/\/[a-z0-9-]+\.trycloudflare\.com[^\s<>()]*/gi
+// A user-facing local address must never be the only preview link unless the
+// session is known to be at this computer. The agent cannot reliably tell
+// whether a Codex prompt came from the phone, so an unknown device gets a
+// remote-capable link when a page is being handed over. A reply that already
+// includes the tunnel link may mention localhost too.
+//
+// The path part is plain ASCII URL characters only. Markdown (`code`, **bold**)
+// and Chinese prose, which puts no space after a link, would otherwise run
+// straight into the URL and make a correct pair of links fail to match.
+const LOCAL_ADDRESS = /\bhttps?:\/\/(?:localhost|127\.0\.0\.1|0\.0\.0\.0|\[::1\])(?::\d+)?(?![\w-]|\.\w)(?:[/?#][\w\-.~:/?#@!$&+,;=%]*)?/gi
+const REMOTE_ADDRESS = /\bhttps:\/\/[a-z0-9-]+\.trycloudflare\.com(?:[/?#][\w\-.~:/?#@!$&+,;=%]*)?/gi
+
+// Sentence punctuation that ends up glued to a URL's tail.
+function cleanUrl(raw) {
+  return new URL(raw.replace(/[.,;:!?]+$/, ''))
+}
 
 const LOCAL_REASON = 'That message offers a localhost / 127.0.0.1 page for the user to open. '
   + 'It only opens on this computer. Expose it first: `mp start --port <port>` '
@@ -63,16 +73,10 @@ const LOCAL_REASON = 'That message offers a localhost / 127.0.0.1 page for the u
   + 'For a decision page, give the first link `mp interaction ask` printed, not the 127.0.0.1 one. '
   + 'If the address is not something for them to open — a config value, a log line — carry on.'
 
-const CONFIRM_REASON = 'This reply ends with a substantial decision for the user. '
-  + 'Before presenting it, ask one short question in chat: "Are you using this session '
-  + 'from a phone or other remote device? Reply 远端 or 本机." End the turn after asking; '
-  + 'do not use an asynchronous question tool, so the answer starts a new turn. The UserPromptSubmit hook '
-  + 'remembers either exact reply. If it does not, run `mp remote on` for 远端 '
-  + 'or `mp remote off` for 本机. Then present '
-  + 'the decision using `mp interaction ask` if remote or chat if local.'
+const CONFIRM_LEAD = 'This reply ends with a substantial decision for the user.'
 
 function matchingRemoteLink(text, local, env) {
-  const port = Number(local.port || 80)
+  const port = Number(local.port || (local.protocol === 'https:' ? 443 : 80))
   const root = stateDir(env)
   const candidates = [join(root, 'previews', `${port}.json`)]
   try {
@@ -88,7 +92,7 @@ function matchingRemoteLink(text, local, env) {
       if (Number(state.targetPort ?? state.formPort) !== port || !state.tunnelUrl || !state.sessionToken) continue
       if (state.expiresAt && Date.now() > state.expiresAt) continue
       for (const raw of text.match(REMOTE_ADDRESS) || []) {
-        const link = new URL(raw.replace(/[.,;!?。？！]+$/, ''))
+        const link = cleanUrl(raw)
         if (link.origin !== new URL(state.tunnelUrl).origin) continue
         if (link.pathname !== local.pathname || link.hash !== local.hash) continue
         if ([...local.searchParams].some(([key, value]) => !link.searchParams.getAll(key).includes(value))) continue
@@ -107,7 +111,7 @@ export function handsOverLocalAddress(message, env = process.env) {
   const urls = text.match(LOCAL_ADDRESS) || []
   return urls.some((url) => {
     try {
-      return !matchingRemoteLink(text, new URL(url.replace(/[.,;!?。？！]+$/, '')), env)
+      return !matchingRemoteLink(text, cleanUrl(url), env)
     } catch {
       return true
     }
@@ -122,20 +126,24 @@ export function looksLikeAnUnansweredDecision(message) {
 }
 
 export function decide(payload, {
-  remote = false, confirmed = true, blocks = 0, pageOpen = false, env = process.env,
+  remote = false, confirmed = true, local = false, blocks = 0, pageOpen = false, env = process.env,
 } = {}) {
   // Already blocked once and re-entered: whatever the model does next, this
   // hook must not be what decides it cannot finish.
   if (payload?.stop_hook_active) return null
-  // A user-facing page link must work on another device regardless of which
-  // one sent the message. Preview links do not use the decision retry budget.
-  if (handsOverLocalAddress(payload?.last_assistant_message, env)) return { block: LOCAL_REASON, kind: 'preview' }
+  // A user-facing page link must work on another device unless this session
+  // is known to be at this computer: a local user told where their dev server
+  // is must not be pushed into opening a public tunnel. Preview links do not
+  // use the decision retry budget.
+  if (!local && handsOverLocalAddress(payload?.last_assistant_message, env)) {
+    return { block: LOCAL_REASON, kind: 'preview' }
+  }
   if (blocks >= MAX_BLOCKS) return null
   // The model did open a page — the message is describing it, not replacing
   // it. These two read almost identically in the text and are opposites.
   if (pageOpen) return null
   if (!looksLikeAnUnansweredDecision(payload?.last_assistant_message)) return null
-  if (!confirmed) return { block: CONFIRM_REASON, kind: 'confirm' }
+  if (!confirmed) return { block: confirmReason(payload?.session_id, CONFIRM_LEAD), kind: 'confirm' }
   if (!remote) return null
   return { block: REASON, kind: 'decision' }
 }
@@ -153,7 +161,7 @@ async function main() {
   if (!verdict) return
 
   if (verdict.kind === 'decision') writeMark(payload.session_id, { blocks: Number(mark?.blocks ?? 0) + 1 })
-  if (verdict.kind === 'confirm') writeMark(payload.session_id, { awaitingManualRemote: true })
+  if (verdict.kind === 'confirm') recordConfirmAsk(payload.session_id, mark)
   process.stdout.write(`${JSON.stringify({ decision: 'block', reason: verdict.block })}\n`)
 }
 

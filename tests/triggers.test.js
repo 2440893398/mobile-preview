@@ -124,12 +124,12 @@ test('SessionStart 恢复会话时保留用户已确认的远端选择', () => {
 
 test('手动确认的远端或本机选择按会话保存，Happy 和 Claude 手机信号仍可直接判定', () => {
   const env = tempEnv()
-  assert.deepEqual(remoteStatus(null, env), { remote: false, confirmed: false })
+  assert.deepEqual(remoteStatus(null, env), { remote: false, confirmed: false, local: false })
   writeMark('manual', { remote: false, manualRemote: false }, env)
-  assert.deepEqual(remoteStatus(readMark('manual', env), env), { remote: false, confirmed: true })
+  assert.deepEqual(remoteStatus(readMark('manual', env), env), { remote: false, confirmed: true, local: true })
   writeMark('manual', { manualRemote: true }, env)
-  assert.deepEqual(remoteStatus(readMark('manual', env), env), { remote: true, confirmed: true })
-  assert.deepEqual(remoteStatus({ remote: true, manualRemote: false }, env), { remote: true, confirmed: true })
+  assert.deepEqual(remoteStatus(readMark('manual', env), env), { remote: true, confirmed: true, local: false })
+  assert.deepEqual(remoteStatus({ remote: true, manualRemote: false }, env), { remote: true, confirmed: true, local: false })
 })
 
 test('mp remote on/off 只改当前 Codex 会话的手动选择，且缺少会话 ID 时拒绝写入', () => {
@@ -162,6 +162,8 @@ test('只接受待确认问题的明确短答，自动记住选择；其他文�
   const unrelated = runHook('manual-confirm.mjs', { session_id: 's-answer', prompt: '本机地址是 localhost' }, env)
   assert.equal(unrelated.status, 0, unrelated.stderr)
   assert.equal(readMark('s-answer', env).manualRemote, undefined)
+  assert.equal(readMark('s-answer', env).awaitingManualRemote, false, '答非所问就撤掉待确认，免得几小时后一句 local 被当成答案')
+  writeMark('s-answer', { awaitingManualRemote: true }, env)
 
   const reply = runHook('manual-confirm.mjs', { session_id: 's-answer', prompt: '远端' }, env)
   assert.equal(reply.status, 0, reply.stderr)
@@ -507,10 +509,10 @@ test('桌面会话：最近一条是手机发的就算远程，电脑发的就�
   assert.equal(steeredFromPhone(desktopEnv({ steeredByRemoteClient: false })), false)
   assert.equal(steeredFromPhone(desktopEnv({})), false, '没有这个字段的老会话当本地')
   assert.deepEqual(remoteStatus(null, desktopEnv({ steeredByRemoteClient: false })), {
-    remote: false, confirmed: true,
+    remote: false, confirmed: true, local: true,
   }, '明确的本机来源不该再要求手动确认')
   assert.deepEqual(remoteStatus({ manualRemote: true }, desktopEnv({ steeredByRemoteClient: false })), {
-    remote: false, confirmed: true,
+    remote: false, confirmed: true, local: true,
   }, 'Claude 从手机切回本机时不能被旧的手动标记锁在远端')
 })
 
@@ -614,9 +616,9 @@ test('interaction 页面只认同一个表单端口与 token 的远程链接', (
   assert.equal(handsOverLocalAddress('http://127.0.0.1:8124/ https://decision.trycloudflare.com/?__mp_token=answer-token', env), true)
 })
 
-test('可打开的 localhost 链接不消耗长篇决策次数；本机会话的第三次预览也会被拦', () => {
+test('可打开的 localhost 链接不消耗长篇决策次数；设备未知时第三次预览也会被拦', () => {
   const env = tempEnv()
-  writeMark('s-preview', { remote: false, manualRemote: false, blocks: 0 }, env)
+  writeMark('s-preview', { remote: false, blocks: 0 }, env)
   for (let i = 0; i < 3; i += 1) {
     const res = runHook('stop.mjs', { session_id: 's-preview', last_assistant_message: `打开 http://localhost:${5100 + i}/` }, env)
     assert.equal(res.status, 0, res.stderr)
@@ -694,4 +696,55 @@ test('中文的长篇和英文的长篇被同等对待——不然这道兜底�
   // 短的还是不拦，两种语言都一样。
   assert.equal(looksLikeAnUnansweredDecision('两个方案你选哪个？'), false)
   assert.equal(looksLikeAnUnansweredDecision('Which of the two do you prefer?'), false)
+})
+
+// ---- 评审修复的回归 ----
+
+test('链接后面紧跟反引号、加粗或中文，都不影响认出正确的那对链接', () => {
+  const env = tempEnv()
+  mkdirSync(join(env.MP_STATE_DIR, 'previews'), { recursive: true })
+  writeFileSync(join(env.MP_STATE_DIR, 'previews', '5173.json'), JSON.stringify({
+    targetPort: 5173, tunnelUrl: 'https://a-b.trycloudflare.com', sessionToken: 'tok',
+    expiresAt: Date.now() + 60_000,
+  }))
+  for (const msg of [
+    '手机 `https://a-b.trycloudflare.com/?__mp_token=tok` 电脑 `http://localhost:5173`',
+    '手机打开 https://a-b.trycloudflare.com/?__mp_token=tok，电脑打开 http://localhost:5173/看看',
+    '**手机**：https://a-b.trycloudflare.com/?__mp_token=tok\n**电脑**：http://localhost:5173**',
+    '电脑 http://localhost:5173. 手机 https://a-b.trycloudflare.com/?__mp_token=tok.',
+  ]) {
+    assert.equal(handsOverLocalAddress(msg, env), false, msg)
+  }
+  assert.equal(handsOverLocalAddress('http://localhost.example.com/', env), false, 'localhost 开头的外部域名不是本地地址')
+  assert.equal(handsOverLocalAddress('打开 http://localhost:5173看看', env), true)
+})
+
+test('https://localhost 按 443 找预览', () => {
+  const env = tempEnv()
+  mkdirSync(join(env.MP_STATE_DIR, 'previews'), { recursive: true })
+  writeFileSync(join(env.MP_STATE_DIR, 'previews', '443.json'), JSON.stringify({
+    targetPort: 443, tunnelUrl: 'https://s.trycloudflare.com', sessionToken: 'k', expiresAt: Date.now() + 60_000,
+  }))
+  assert.equal(handsOverLocalAddress('https://localhost/ https://s.trycloudflare.com/?__mp_token=k', env), false)
+})
+
+test('明确在本机的会话不再为 localhost 被推去开公网隧道', () => {
+  assert.equal(stopDecide({ last_assistant_message: '打开 http://localhost:5173/' }, { local: true }), null)
+  const env = tempEnv()
+  writeMark('s-local', { manualRemote: false }, env)
+  assert.equal(runHook('stop.mjs', { session_id: 's-local', last_assistant_message: '打开 http://localhost:5173/' }, env).stdout.trim(), '')
+})
+
+test('设备确认最多问两次，之后不再问；兜底命令带上会话 id', () => {
+  const env = tempEnv()
+  writeMark('s-ask', { remote: false }, env)
+  const input = { session_id: 's-ask', ...bigChoice }
+  const first = runHook('ask-question.mjs', input, env)
+  assert.match(JSON.parse(first.stdout).hookSpecificOutput.permissionDecisionReason, /mp remote on --session s-ask/)
+  const second = runHook('stop.mjs', { session_id: 's-ask', last_assistant_message: LONG }, env)
+  assert.match(JSON.parse(second.stdout).reason, /mp remote off --session s-ask/)
+  assert.equal(readMark('s-ask', env).confirmAsks, 2)
+  assert.equal(runHook('ask-question.mjs', input, env).stdout.trim(), '')
+  assert.equal(runHook('stop.mjs', { session_id: 's-ask', last_assistant_message: LONG }, env).stdout.trim(), '')
+  assert.deepEqual(remoteStatus(readMark('s-ask', env), env), { remote: false, confirmed: true, local: false })
 })

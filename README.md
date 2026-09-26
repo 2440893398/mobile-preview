@@ -202,8 +202,8 @@ asks the user one short question. An exact `远端` or `本机` reply is saved b
 confirmed remote choice causes large decisions to move to `mp interaction`.
 
 For preview links the rule is simpler: a localhost page is never the only link
-handed to the user. Stop requests an `mp start` link regardless of the device,
-while allowing an additional local link. Preview checks do not consume the
+handed to the user unless the session is known to be local. Stop requests an
+`mp start` link otherwise, while allowing an additional local link. Preview checks do not consume the
 two-attempt budget for long decisions. Happy detection and the manual choice
 share `%LOCALAPPDATA%\mobile-preview\sessions\<id>.json`.
 

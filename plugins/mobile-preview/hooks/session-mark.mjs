@@ -190,19 +190,51 @@ export function steeredFromPhone(env = process.env) {
   return desktopSteeringStatus(env) === true
 }
 
+// How many times the hooks may ask "远端 or 本机?" in one session before they
+// stop asking. A user who does not answer the exact word twice is not going
+// to on the third try, and asking every turn is the nuisance these hooks exist
+// to avoid.
+export const MAX_CONFIRM_ASKS = 2
+
 // A human can confirm the mode once for this session when Codex cannot tell
 // who sent a message. Explicit local confirmation silences the question, but
 // never overrides a live Happy or Claude phone signal.
+//
+// `local` is only true when something positively said "at this computer" —
+// the desktop app's per-message flag or the user's own answer. Giving up on
+// the question counts as confirmed (stop asking) but not as local.
 export function remoteStatus(mark, env = process.env) {
-  const desktop = desktopSteeringStatus(env)
-  if (mark?.remote) return { remote: true, confirmed: true }
+  if (mark?.remote) return { remote: true, confirmed: true, local: false }
   // Claude desktop reports both directions per message. A stale manual choice
   // must not keep it remote after that host reports a local message.
-  if (desktop !== null) return { remote: desktop, confirmed: true }
-  return {
-    remote: mark?.manualRemote === true,
-    confirmed: typeof mark?.manualRemote === 'boolean',
+  const desktop = desktopSteeringStatus(env)
+  if (desktop !== null) return { remote: desktop, confirmed: true, local: !desktop }
+  if (typeof mark?.manualRemote === 'boolean') {
+    return { remote: mark.manualRemote, confirmed: true, local: !mark.manualRemote }
   }
+  const gaveUp = Number(mark?.confirmAsks ?? 0) >= MAX_CONFIRM_ASKS
+  return { remote: false, confirmed: gaveUp, local: false }
+}
+
+export function recordConfirmAsk(sessionId, mark, env = process.env) {
+  return writeMark(sessionId, {
+    awaitingManualRemote: true,
+    confirmAsks: Number(mark?.confirmAsks ?? 0) + 1,
+  }, env)
+}
+
+// Shared by the PreToolUse and Stop hooks. The session id goes into the
+// fallback command: outside Codex nothing in the shell environment names the
+// session, so a bare `mp remote on` has nothing to key the choice by.
+export function confirmReason(sessionId, lead) {
+  const session = markPath(sessionId, process.env) ? ` --session ${sessionId}` : ''
+  return `${lead} Before presenting it, ask one short question in chat: `
+    + '"Are you using this session from a phone or other remote device? Reply 远端 or 本机." '
+    + 'End the turn after asking; do not use an asynchronous question tool, so the answer starts a new turn. '
+    + 'The UserPromptSubmit hook remembers either exact reply for this session. If it does not, '
+    + `run \`mp remote on${session}\` for 远端 or \`mp remote off${session}\` for 本机. `
+    + 'Then present the decision: use `mp interaction ask` if remote, or the normal chat question if local. '
+    + 'Do not infer the device from this prompt.'
 }
 
 export function isRemoteNow(mark, env = process.env) {

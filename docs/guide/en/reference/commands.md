@@ -73,9 +73,10 @@ also stops stale and unreadable slots.
 
 When a substantial decision needs a device choice, the plugin asks for the exact
 reply `远端` or `本机` and its `UserPromptSubmit` hook records it. If that hook
-did not run, the AI can run `mp remote on/off` after the answer. Preview links
-do not depend on this choice: a local page offered to the user always gets a
-link that works from another device. User messages refresh the choice; it
+did not run, the AI can run `mp remote on/off` after the answer. Unless the
+session is confirmed local, a local page offered to the user must also get a
+link that works from another device. The confirmation is asked at most twice
+per session. User messages refresh the choice; it
 expires after 30 days of inactivity.
 
 ## mp secret

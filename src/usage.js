@@ -88,6 +88,18 @@ export const COMMANDS = {
     args: '', maxPositionals: 0,
     flags: { session: { value: '<id>', help: 'Session ID (default: CODEX_SESSION_ID)' } },
   },
+  'html on': {
+    summary: 'Write long, structured replies as an HTML page instead of a wall of chat text (all sessions)',
+    args: '', maxPositionals: 0, flags: {},
+  },
+  'html off': {
+    summary: 'Keep replies in the chat (the default)',
+    args: '', maxPositionals: 0, flags: {},
+  },
+  'html status': {
+    summary: 'Show whether HTML replies are on',
+    args: '', maxPositionals: 0, flags: {},
+  },
   // The `secret` group: credentials the phone fills in and the AI may use
   // but never read. Keyed as "secret <sub>" so parseArgs and --help treat a
   // subcommand exactly like a top-level command; main() joins the two words.
@@ -185,6 +197,7 @@ export const COMMANDS = {
       id: { value: '<id>', help: 'Replace an open question\'s page with a new one (a re-ask after "the premise is wrong"); bumps its revision' },
       ttl: { value: '<min>', default: '120', help: 'Minutes the answer stays readable after it arrives (1–1440)' },
       'form-ttl': { value: '<min>', default: '30', help: 'Minutes the link stays open (1–60)' },
+      local: { help: 'The user is at this machine: serve the page on 127.0.0.1 only, no tunnel' },
       json: { help: 'Print one machine-readable JSON object on stdout instead of prose' },
     },
   },
@@ -221,6 +234,7 @@ export const COMMANDS = {
 // is not a group: main() uses this to decide whether a first word is one.
 export const GROUPS = {
   remote: 'remember a user-confirmed remote or local choice for this Codex session',
+  html: 'whether long, structured replies are written as an HTML page',
   secret: 'credentials the phone fills in; the AI may use them but never read them',
   interaction: 'a decision the user makes on a page; the answer comes back as JSON',
 }

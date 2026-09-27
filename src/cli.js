@@ -17,7 +17,9 @@ import { LOCALHOST_HARDCODE_HINT, formatDoctor, runChecks } from './doctor.js'
 import { resolveServeTarget } from './static.js'
 import { createSecretCommands } from './secret-cli.js'
 import { createInteractionCommands } from './interaction-cli.js'
-import { readMark, writeMark } from '../plugins/mobile-preview/hooks/session-mark.mjs'
+import {
+  htmlRepliesOn, readMark, writeMark, writeSettings,
+} from '../plugins/mobile-preview/hooks/session-mark.mjs'
 
 // Covers daemon process startup, the proxy's listen() before it even calls
 // startTunnel, and the final state-file write — none of which are part of
@@ -883,6 +885,18 @@ function cmdRemote(args, command) {
   note(manualRemote ? 'remote confirmed for this session' : 'local confirmed for this session')
 }
 
+function cmdHtml(args, command) {
+  const parsed = parseArgs(args, `html ${command}`)
+  if (parsed.help) return console.log(renderCommandHelp(`html ${command}`))
+
+  if (command !== 'status' && !writeSettings({ htmlReplies: command === 'on' })) {
+    fail('Could not save the setting.')
+  }
+  note(htmlRepliesOn()
+    ? 'html replies on: long, structured replies are written as an HTML page'
+    : 'html replies off: replies stay in the chat')
+}
+
 export async function main(argv) {
   const [cmd, ...rest] = argv
 
@@ -945,6 +959,11 @@ const groupCommands = {
     on: (args) => cmdRemote(args, 'on'),
     off: (args) => cmdRemote(args, 'off'),
     status: (args) => cmdRemote(args, 'status'),
+  },
+  html: {
+    on: (args) => cmdHtml(args, 'on'),
+    off: (args) => cmdHtml(args, 'off'),
+    status: (args) => cmdHtml(args, 'status'),
   },
   secret: createSecretCommands(groupDeps),
   interaction: createInteractionCommands(groupDeps),

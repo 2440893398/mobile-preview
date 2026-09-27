@@ -29,8 +29,9 @@ source_anchors:
 | `mp stop` | 拆掉预览，并确保没有残留进程 | `--port` `--all` |
 | `mp doctor` | 检查 mp 需要的东西是否都已安装、在 PATH 上、可达 | 无 |
 | `mp remote on/off/status` | 记住当前 Codex 会话经用户确认的远端或本机选择 | `--session` |
+| `mp html on/off/status` | 长而有结构的回复改写成 HTML 页面（本机所有会话） | 无 |
 | `mp secret ask/wait/run/render/peek/saved/status/forget` | 手机填凭据，AI 可用但读不到；可加密保存在本机 | `--field` `--use` `--render` `--id` |
-| `mp interaction ask/wait/status/close` | 把一个决定做成页面，答案以 JSON 回来 | `--html` `--id` `--timeout` |
+| `mp interaction ask/wait/status/close` | 把一个决定做成页面，答案以 JSON 回来 | `--html` `--local` `--id` `--timeout` |
 
 ## mp start
 
@@ -75,6 +76,18 @@ source_anchors:
 执行 `mp remote on/off`。设备未知或远端时，交给用户打开的本地页面必须附可从其他设备打开的链接；
 确认本机后不再要求。确认问题每个会话最多问两次。手动选择随用户消息续期，连续 30 天不用后失效。
 
+## mp html
+
+| 子命令 | 参数 | 默认 | 说明 |
+|---|---|---|---|
+| `html on` | 无 | 关闭 | 之后很长、带表格或多个小节的回复，AI 写成一个自包含 HTML 文件交给你，聊天里只留两三行和链接 |
+| `html off` | 无 | | 回复留在聊天里 |
+| `html status` | 无 | | 查看开关状态 |
+
+开关对本机所有会话生效，存在 `%LOCALAPPDATA%\mobile-preview\settings.json`。打开后，新会话开头会说明这条规则；
+AI 仍把长篇写在聊天里时，`Stop` hook 会退回让它改成页面。在电脑前，页面用宿主自己的方式打开或给出文件路径；
+可能不在电脑前时，用 `mp start --serve` 给远程链接。短回答、要复制的代码和日志不受影响。
+
 ## mp secret
 
 值默认只在各自守护进程的内存里。你在手机上勾选「记住」后，值会加密保存在本机，下次按你选的档位
@@ -110,6 +123,7 @@ source_anchors:
 | | `--id <id>` | 无 | 用新页面替换某个未关闭问题的页面，修订号加一 |
 | | `--ttl <min>` | 120 | 答案到达后可读的分钟数，取值 1 到 1440 |
 | | `--form-ttl <min>` | 30 | 链接开放的分钟数，取值 1 到 60 |
+| | `--local` | 关闭 | 用户就在这台电脑前：页面只在 127.0.0.1 上提供，不开隧道，只打印这一条链接 |
 | `interaction wait` | `--timeout <sec>` | 540 | 超时即报告"仍在等待"并以退出码 0 结束，链接仍开着 |
 | `interaction close` | `--all` | 关闭 | 关掉每个问题，包括陈旧的 |
 

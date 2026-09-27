@@ -31,6 +31,11 @@ const MANY_QUESTIONS = 2
 const SUBSTANTIAL = 250
 // One question that simply takes this much reading.
 const LONG = 400
+// At the desk the host's own picker is right there and reads fine, so only a
+// question several times past the phone's bar is worth a page: options that
+// each carry a paragraph, or a question that is really a short essay.
+const LOCAL_EXPLAINED_OPTIONS = 450
+const LOCAL_LONG = 900
 
 
 const REASON = 'This question is large enough that answering it in the chat means reading a wall of text. '
@@ -38,6 +43,12 @@ const REASON = 'This question is large enough that answering it in the chat mean
   + '`mp interaction ask --purpose "<why>" --html <file>`, hand over the printed link as a bare line, '
   + 'then `mp interaction wait --id <id>` and act on the JSON it prints. '
   + 'See the mobile-preview skill for what the page must contain.'
+
+const LOCAL_REASON = 'This question is large enough that weighing it in a chat picker means reading a wall of text. '
+  + 'The user is at this computer, so put it on a local page: write one self-contained HTML file and run '
+  + '`mp interaction ask --local --purpose "<why>" --html <file>`, hand over the 127.0.0.1 link it prints '
+  + '(and open it in your browser pane if you have one), then `mp interaction wait --id <id>` and act on the '
+  + 'JSON it prints. See the mobile-preview skill for what the page must contain.'
 
 const CONFIRM_LEAD = 'This is a large decision for the user.'
 
@@ -71,7 +82,9 @@ export function shapeOf(input) {
   }
 }
 
-export function decide({ tool_name: tool, tool_input: input, session_id: sessionId } = {}, { remote = false, confirmed = true } = {}) {
+export function decide({ tool_name: tool, tool_input: input, session_id: sessionId } = {}, {
+  remote = false, confirmed = true, local = false,
+} = {}) {
   if (!/^(AskUserQuestion|request_user_input(_async)?)$/.test(String(tool ?? ''))) return null
 
   const s = shapeOf(input)
@@ -83,8 +96,10 @@ export function decide({ tool_name: tool, tool_input: input, session_id: session
   if (!tooMuchToCompare && !tooManyAtOnce && !tooMuchToRead) return null
 
   if (!confirmed) return { deny: confirmReason(sessionId, CONFIRM_LEAD), shape: s, kind: 'confirm' }
-  if (!remote) return null
-  return { deny: REASON, shape: s }
+  if (remote) return { deny: REASON, shape: s }
+  if (!local) return null
+  const heavy = (s.maxOptions >= MANY_OPTIONS && s.heaviestOptions > LOCAL_EXPLAINED_OPTIONS) || s.load > LOCAL_LONG
+  return heavy ? { deny: LOCAL_REASON, shape: s, kind: 'local' } : null
 }
 
 async function main() {

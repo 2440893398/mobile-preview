@@ -4,7 +4,7 @@ import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { readPayload } from './hook-io.mjs'
 import {
-  confirmReason, hasOpenInteraction, readMark, recordConfirmAsk, remoteStatus, stateDir, writeMark,
+  confirmReason, hasOpenInteraction, htmlRepliesOn, readMark, recordConfirmAsk, remoteStatus, stateDir, writeMark,
 } from './session-mark.mjs'
 import { weigh } from './cjk.mjs'
 
@@ -73,7 +73,55 @@ const LOCAL_REASON = 'That message offers a localhost / 127.0.0.1 page for the u
   + 'For a decision page, give the first link `mp interaction ask` printed, not the 127.0.0.1 one. '
   + 'If the address is not something for them to open — a config value, a log line — carry on.'
 
+// The same page at the desk. A wall of options is no easier to weigh on a
+// monitor than on a phone — the page is what draws the comparison and turns
+// the answer into JSON — so a known-local session gets it too, just without
+// the tunnel, which there is only a slower way to reach a port they can open.
+const LOCAL_DECISION_REASON = 'That message asks the user to decide, and it is long enough that weighing it '
+  + 'in the chat is the slow way round. The user is at this computer, so put it on a local page: write one '
+  + 'self-contained HTML file with the choices as controls, run '
+  + '`mp interaction ask --local --purpose "<why>" --html <file>`, hand over the 127.0.0.1 link it prints '
+  + '(and open it in your browser pane if you have one), then `mp interaction wait --id <id>` and act on the '
+  + 'JSON it prints. See the mobile-preview skill for what the page must contain. '
+  + 'If this really is not a decision for them to make, say so in one line and stop.'
+
 const CONFIRM_LEAD = 'This reply ends with a substantial decision for the user.'
+
+// ---- the switch: `mp html on` ----
+//
+// Not a decision, just a lot to read: a comparison in tables, an
+// investigation in sections. Off by default and only ever the user's choice —
+// the hook cannot tell a reply that reads better as a page from one that is
+// long because the work was, and guessing would put a toll on every long
+// answer. Once they have said they want it, the shape is enough.
+const REPORT_LONG = 2_400
+const REPORT_VERY_LONG = 6_000
+const TABLE = /^[ \t]*\|.*\|[ \t]*\r?\n[ \t]*\|?[ \t]*:?-{3,}/m
+const HEADING = /^#{1,6}[ \t]+\S/gm
+
+export function looksLikeAComplexReply(message) {
+  const text = String(message ?? '')
+  const size = weigh(text)
+  if (size > REPORT_VERY_LONG) return true
+  if (size <= REPORT_LONG) return false
+  return TABLE.test(text) || (text.match(HEADING) || []).length >= 3
+}
+
+const REPORT_WHAT = 'The user has turned on HTML replies (`mp html on`), and that reply is long and structured '
+  + 'enough to read better as a page. Write the same content as one self-contained HTML file (inline CSS, no '
+  + 'external resources) in the system temp directory — draw what can be drawn: tables as tables, comparisons '
+  + 'as bars or side-by-side cards, flows as boxes and arrows, detail folded into <details>. '
+
+const REPORT_LOCAL = `${REPORT_WHAT}The user is at this computer: show the file with your host's own way of `
+  + 'rendering an HTML file if it has one (e.g. a send-file tool with display "render"), otherwise give its '
+  + 'absolute path as a link. '
+
+const REPORT_REMOTE = `${REPORT_WHAT}The user may not be at this computer: serve its directory with `
+  + '`mp start --serve <dir>` and give the preview URL it prints as a bare line. '
+
+const REPORT_TAIL = 'Then end the turn with a two- or three-line summary and the link — not the full reply again. '
+  + 'If this reply is not worth a page (mostly code to copy, a log, a quick answer that happens to be long), '
+  + 'say so in one line and stop.'
 
 function matchingRemoteLink(text, local, env) {
   const port = Number(local.port || (local.protocol === 'https:' ? 443 : 80))
@@ -126,7 +174,7 @@ export function looksLikeAnUnansweredDecision(message) {
 }
 
 export function decide(payload, {
-  remote = false, confirmed = true, local = false, blocks = 0, pageOpen = false, env = process.env,
+  remote = false, confirmed = true, local = false, blocks = 0, pageOpen = false, html = false, env = process.env,
 } = {}) {
   // Already blocked once and re-entered: whatever the model does next, this
   // hook must not be what decides it cannot finish.
@@ -138,14 +186,23 @@ export function decide(payload, {
   if (!local && handsOverLocalAddress(payload?.last_assistant_message, env)) {
     return { block: LOCAL_REASON, kind: 'preview' }
   }
-  if (blocks >= MAX_BLOCKS) return null
   // The model did open a page — the message is describing it, not replacing
   // it. These two read almost identically in the text and are opposites.
   if (pageOpen) return null
-  if (!looksLikeAnUnansweredDecision(payload?.last_assistant_message)) return null
-  if (!confirmed) return { block: confirmReason(payload?.session_id, CONFIRM_LEAD), kind: 'confirm' }
-  if (!remote) return null
-  return { block: REASON, kind: 'decision' }
+  const message = payload?.last_assistant_message
+  if (looksLikeAnUnansweredDecision(message)) {
+    if (blocks >= MAX_BLOCKS) return null
+    if (!confirmed) return { block: confirmReason(payload?.session_id, CONFIRM_LEAD), kind: 'confirm' }
+    if (remote) return { block: REASON, kind: 'decision' }
+    if (local) return { block: LOCAL_DECISION_REASON, kind: 'decision' }
+    return null
+  }
+  // Not budgeted like a decision: the user asked for this, and
+  // stop_hook_active already keeps it from arguing with its own answer.
+  if (html && looksLikeAComplexReply(message)) {
+    return { block: (local ? REPORT_LOCAL : REPORT_REMOTE) + REPORT_TAIL, kind: 'report' }
+  }
+  return null
 }
 
 async function main() {
@@ -157,6 +214,7 @@ async function main() {
     ...remoteStatus(mark),
     blocks: Number(mark?.blocks ?? 0),
     pageOpen: hasOpenInteraction(),
+    html: htmlRepliesOn(),
   })
   if (!verdict) return
 

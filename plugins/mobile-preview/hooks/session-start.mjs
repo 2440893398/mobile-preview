@@ -21,7 +21,7 @@ import { execFileSync } from 'node:child_process'
 import process from 'node:process'
 import { pathToFileURL } from 'node:url'
 import { readPayload } from './hook-io.mjs'
-import { pruneMarks, writeMark } from './session-mark.mjs'
+import { htmlRepliesOn, pruneMarks, writeMark } from './session-mark.mjs'
 
 // Happy runs Claude Code out of its own npm package, so the SDK binary path is
 // the marker that survives every launch mode we have seen. HAPPY_* variables
@@ -155,6 +155,24 @@ In Windows PowerShell the command is \`mp.cmd\`; \`mp\` there is an alias for
 Move-ItemProperty.
 </mobile-preview>`
 
+// Only when the user ran `mp html on`, and in any session, local or not. Said
+// up front so the page is the first draft; the Stop hook catching it after
+// the fact means the same reply gets written twice.
+export const HTML_CONTEXT = `<mobile-preview-html>
+The user has asked for long, structured replies as an HTML page (\`mp html on\`).
+When a reply would run to many screens, or carry tables, several sections or a
+comparison, write it as one self-contained HTML file (inline CSS, no external
+resources) in the system temp directory instead: draw what can be drawn —
+tables as tables, trade-offs as bars or side-by-side cards, flows as boxes and
+arrows — and fold detail into <details>. Show it with the host's own way of
+rendering an HTML file if it has one, otherwise give its absolute path; if the
+user may not be at this computer, serve it with \`mp start --serve <dir>\` and
+give that link. Then say two or three lines and give the link — not the whole
+reply again. Short answers, code to copy and logs stay in the chat. A decision
+the user has to make goes on an \`mp interaction ask\` page instead
+(\`--local\` when they are at this computer).
+</mobile-preview-html>`
+
 // Both hosts read hookSpecificOutput.additionalContext; a hook that stays quiet
 // costs the session nothing, which is what a local session should get.
 //
@@ -174,11 +192,12 @@ async function main() {
     writeMark(payload.session_id, { remote: detected.remote, via: detected.via, blocks: 0 })
   }
 
-  if (!detected.remote) return
+  const context = [detected.remote && REMOTE_CONTEXT, htmlRepliesOn() && HTML_CONTEXT].filter(Boolean)
+  if (!context.length) return
   process.stdout.write(JSON.stringify({
     hookSpecificOutput: {
       hookEventName: 'SessionStart',
-      additionalContext: REMOTE_CONTEXT,
+      additionalContext: context.join('\n\n'),
     },
   }) + '\n')
 }

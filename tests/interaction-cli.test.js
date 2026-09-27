@@ -331,6 +331,35 @@ test('本机链接：同一把钥匙直连 127.0.0.1，不经隧道；端口没�
   assert.ok(!formatInteractionAsk({ ...s, formPort: null }).includes('127.0.0.1'))
 })
 
+test('--local 的问题不开隧道：只有 127.0.0.1 这一条链接，照样能提交', async () => {
+  // 人在电脑前：隧道只是更慢、还可能被本机代理搞坏的一条路。
+  const { id, handle } = await startDaemon({
+    local: true,
+    startTunnelFn: async () => { throw new Error('--local 不该碰隧道') },
+  })
+  try {
+    const s = state.readInteraction(id)
+    assert.equal(s.stage, 'collecting')
+    assert.equal(s.local, true)
+    assert.equal(s.tunnelUrl, null)
+    assert.equal(interactionUrl(s), localInteractionUrl(s))
+    const text = formatInteractionAsk(s)
+    assert.ok(!text.includes('trycloudflare'))
+    assert.ok(!/on the phone/.test(text), '本机问题不能叫人去手机上答')
+    assert.ok(text.split('\n').includes(localInteractionUrl(s)), '链接单独成行')
+
+    const listed = JSON.parse((await mp(['interaction', 'status', '--json'])).stdout)
+    const mine = listed.find((x) => x.id === id)
+    assert.equal(mine.url, localInteractionUrl(s))
+    assert.equal(mine.local, true)
+
+    await submit(id, handle)
+    assert.equal(state.readInteraction(id).stage, 'submitted')
+  } finally {
+    await mp(['interaction', 'close', '--id', id])
+  }
+})
+
 test('status 的散文形态在没有问题时也说得出话', () => {
   assert.equal(formatInteractionStatus([]), 'no open interaction')
 })

@@ -1,5 +1,5 @@
 {
-  "description": "SessionStart records Happy sessions. UserPromptSubmit remembers an exact remote/local answer after the hooks ask for confirmation. PreToolUse protects secret handling and routes substantial decisions after confirmation. Stop asks for a remote-capable mp link whenever a reply hands the user a localhost page, unless the session is known to be local; for long unanswered decisions it first confirms an unknown session mode (at most twice per session), then uses mp interaction when remote.",
+  "description": "SessionStart records Happy sessions. UserPromptSubmit remembers an exact remote/local answer after the hooks ask for confirmation. PreToolUse protects secret handling and routes substantial decisions after confirmation. Stop asks for a remote-capable mp link whenever a reply hands the user a localhost page, unless the session is known to be local; for long unanswered decisions it first confirms an unknown session mode (at most twice per session), then asks for an mp interaction page (--local when the session is local); with `mp html on` it also sends back long structured replies to be written as an HTML page. SessionStart states that rule up front while the switch is on.",
   "hooks": {
     "SessionStart": [
       {

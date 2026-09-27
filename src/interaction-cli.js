@@ -24,7 +24,14 @@ import { renderCommandHelp } from './usage.js'
 // person reading carefully as a failure.
 
 export function interactionUrl(s) {
+  if (s.local) return localInteractionUrl(s)
   return `${s.tunnelUrl}/?${SESSION_TOKEN_QUERY_PARAM}=${s.sessionToken}`
+}
+
+// A link is ready once the form has a token and something to reach it by:
+// the tunnel, or — for a question asked with --local — loopback alone.
+export function hasLink(s) {
+  return Boolean(s?.stage === 'collecting' && s.sessionToken && (s.tunnelUrl || (s.local && s.formPort)))
 }
 
 // The same door without the tunnel: the form already listens on loopback, and
@@ -43,14 +50,23 @@ function minutesLeft(at, now = Date.now()) {
 
 export function formatInteractionAsk(s, { reopen = false } = {}, now = Date.now()) {
   const local = localInteractionUrl(s)
+  const expiry = `id: ${s.id} — the link is open for ${minutesLeft(s.formExpiresAt, now)} min; `
+    + `the answer is kept for ${minutesLeft(s.expiresAt, now)} min`
+  if (s.local) {
+    return [
+      reopen ? `revision ${s.revision} — answer at this machine:` : 'answer at this machine (no tunnel — it does not open on a phone):',
+      local,
+      expiry,
+      `next: mp interaction wait --id ${s.id}`,
+    ].join('\n')
+  }
   return [
     reopen ? `revision ${s.revision} — answer on the phone:` : 'answer on the phone:',
     // Bare line of its own, same rule as `mp start`: a link the user cannot
     // copy is a link that never arrives.
     interactionUrl(s),
     ...(local ? ['or at this machine (browser pane, your own screenshots — never to a phone):', local] : []),
-    `id: ${s.id} — the link is open for ${minutesLeft(s.formExpiresAt, now)} min; `
-    + `the answer is kept for ${minutesLeft(s.expiresAt, now)} min`,
+    expiry,
     `next: mp interaction wait --id ${s.id}`,
   ].join('\n')
 }
@@ -90,7 +106,10 @@ export function formatInteractionStatus(slots, now = Date.now(), held = []) {
 
   const blocks = slots.map((s) => {
     const lines = [`${s.id} — ${s.purpose}`]
-    if (s.stage === 'collecting' && s.tunnelUrl && s.sessionToken) {
+    if (hasLink(s) && s.local) {
+      lines.push(`  waiting at this machine (link open for ${minutesLeft(s.formExpiresAt, now)} more min):`)
+      lines.push(localInteractionUrl(s))
+    } else if (hasLink(s)) {
       lines.push(`  waiting for the phone (link open for ${minutesLeft(s.formExpiresAt, now)} more min):`)
       lines.push(interactionUrl(s))
       const local = localInteractionUrl(s)
@@ -199,7 +218,7 @@ export function createInteractionCommands({
         latest = s
         if (s.error) return { s, outcome: 'error' }
         if (s.reopenError) return { s, outcome: 'reopen-error' }
-        if (s.stage === 'collecting' && s.tunnelUrl && s.sessionToken) return { s, outcome: 'ready' }
+        if (hasLink(s)) return { s, outcome: 'ready' }
         const key = `${s.tunnelStage}:${s.attempt ?? ''}`
         if (s.tunnelStage && key !== announced) {
           announced = key
@@ -220,6 +239,7 @@ export function createInteractionCommands({
           id: r.s.id,
           url: interactionUrl(r.s),
           localUrl: localInteractionUrl(r.s),
+          local: Boolean(r.s.local),
           revision: r.s.revision,
           formExpiresAt: r.s.formExpiresAt,
           expiresAt: r.s.expiresAt,
@@ -267,8 +287,9 @@ export function createInteractionCommands({
       if (!interactionHealth(s).active) {
         fail(`no open interaction ${id}. \`mp interaction status\` lists the live ones.`, { id })
       }
-      if (parsed.purpose !== undefined || parsed.ttl !== undefined || parsed['form-ttl'] !== undefined) {
-        note(`--purpose/--ttl/--form-ttl are ignored with --id: ${id} keeps what it was created with.`)
+      if (parsed.purpose !== undefined || parsed.ttl !== undefined || parsed['form-ttl'] !== undefined
+        || parsed.local !== undefined) {
+        note(`--purpose/--ttl/--form-ttl/--local are ignored with --id: ${id} keeps what it was created with.`)
       }
       let r
       try {
@@ -295,7 +316,9 @@ export function createInteractionCommands({
 
     const child = spawn(process.execPath, [
       join(here, 'interaction-daemon-entry.js'),
-      JSON.stringify({ id, purpose, htmlPath: pagePath, ttlMinutes: ttl, formTtlMinutes: formTtl }),
+      JSON.stringify({
+        id, purpose, htmlPath: pagePath, ttlMinutes: ttl, formTtlMinutes: formTtl, local: Boolean(parsed.local),
+      }),
     ], { detached: true, stdio: 'ignore', windowsHide: true })
     child.unref()
 
@@ -408,7 +431,8 @@ export function createInteractionCommands({
         purpose: s.purpose,
         stage: s.stage,
         revision: s.revision,
-        url: s.stage === 'collecting' && s.tunnelUrl && s.sessionToken ? interactionUrl(s) : null,
+        url: hasLink(s) ? interactionUrl(s) : null,
+        local: Boolean(s.local),
         localUrl: s.stage === 'collecting' ? localInteractionUrl(s) : null,
         draftKeys: s.draft ? Object.keys(s.draft.answers || {}) : [],
         disposition: s.response?.disposition ?? null,

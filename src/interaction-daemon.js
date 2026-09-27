@@ -54,6 +54,11 @@ export async function runInteractionDaemon({
   html,
   ttlMinutes = 120,
   formTtlMinutes = 30,
+  // At this machine only: the form listens on loopback and nothing forwards
+  // to it. For the person sitting here a tunnel is only a slower, flakier way
+  // to reach a port they can already open — and one that a local proxy can
+  // break outright.
+  local = false,
   startTunnelFn = startTunnel,
   ipcPath = state.interactionIpcPath(id),
   // Long enough for the 200 to cross the edge and the receipt to render
@@ -109,6 +114,7 @@ export async function runInteractionDaemon({
   state.writeInteraction(id, {
     id,
     purpose,
+    local: Boolean(local),
     daemonPid: ownerPid,
     createdAt,
     expiresAt,
@@ -213,7 +219,7 @@ export async function runInteractionDaemon({
       tunnelUrl: null, tunnelPid: null, sessionToken: null, reopenError: null,
     })
 
-    const t = await startTunnelFn(formPort, {
+    const t = local ? { url: null, pid: null } : await startTunnelFn(formPort, {
       logPath: state.interactionTunnelLogPath(id),
       onProgress: ({ stage, attempt, tries }) => patch({
         stage: 'starting', tunnelStage: stage, attempt, tries, stageAt: Date.now(),
@@ -221,7 +227,7 @@ export async function runInteractionDaemon({
     })
     if (!form || form.server !== server) {
       // Closed (TTL, close) while the tunnel was coming up.
-      killTree(t.pid)
+      if (t.pid) killTree(t.pid)
       return
     }
     form.tunnelPid = t.pid

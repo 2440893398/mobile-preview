@@ -34,7 +34,13 @@ HTML page, serves it on a tunnel and prints a link; `mp.cmd interaction wait`
 blocks until the phone submits and prints the answers as JSON. A timeout there
 is not an error: it exits 0 with `status: "waiting"` and whatever is filled in
 so far, because someone thinking about a decision takes longer than a single
-call may block.
+call may block. At the desk, `--local` serves the same page on 127.0.0.1 with no
+tunnel.
+
+`mp.cmd html on` is a switch for every session on this machine: long replies
+with tables or several sections are written as a self-contained HTML page and
+handed over as a link, instead of filling the chat. `mp.cmd html off` turns it
+back off.
 
 Run `mp.cmd doctor` first when anything looks wrong — it reports each
 prerequisite separately, with the command that fixes it. `mp.cmd --help` lists
@@ -75,7 +81,8 @@ Codex the second matters more than the first — that host's own instructions
 steer a must-answer question into prose instead of a tool call. If the device
 is unknown, they ask one short confirmation first. The exact answer `远端` or
 `本机` is saved by a `UserPromptSubmit` hook; `mp remote on/off` can save it
-explicitly. Later decision hooks read that session choice.
+explicitly. Later decision hooks read that session choice: remote gets an
+`mp interaction` page, local the same page with `--local`.
 If the user switches devices, `mp remote on/off` updates the same session.
 The manual choice refreshes with user messages and expires after 30 days of
 inactivity.

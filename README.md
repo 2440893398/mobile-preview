@@ -22,7 +22,8 @@ Four things it hands the agent, every one of them token-gated and short-lived:
 | `mp start --serve ./page.html` | the same link for a page mp serves itself — no server of your own to start, or to forget |
 | `mp capture --port 5173` | a phone-sized screenshot **the agent itself** reads, with failed requests and console errors |
 | `mp secret ask` | a form for a password or API key, so it never lands in the chat transcript |
-| `mp interaction ask` | a real page for a decision, instead of a wall of options in a chat bubble |
+| `mp interaction ask` | a real page for a decision, instead of a wall of options in a chat bubble (`--local` at the desk: no tunnel) |
+| `mp html on` | from then on, long structured replies arrive as an HTML page rather than chat text |
 
 It also ships a Claude Code / Codex plugin, so the agent reaches for all of this on its
 own — the person on the phone types "看看效果" or "send me the link", not the name of a tool.
@@ -198,8 +199,15 @@ afternoon. Those tokens are already spent, which is why it is third; it gives
 up after twice in a session rather than arguing with a model that has a reason
 to write that way. When the session mode is unknown, either decision hook first
 asks the user one short question. An exact `远端` or `本机` reply is saved by a
-`UserPromptSubmit` hook; `mp remote on/off` also saves the choice. Only a
-confirmed remote choice causes large decisions to move to `mp interaction`.
+`UserPromptSubmit` hook; `mp remote on/off` also saves the choice. A confirmed
+remote session gets an `mp interaction` page; a confirmed local one gets the
+same page with `--local` — served on 127.0.0.1, no tunnel — with a higher bar
+for the question tool, whose own picker reads fine at the desk.
+
+`mp html on` is a separate switch, off by default, for every session on the
+machine: long replies with tables or several sections are written as an HTML
+page instead of chat text. SessionStart states it up front and Stop sends back
+a reply that ignored it.
 
 For preview links the rule is simpler: a localhost page is never the only link
 handed to the user unless the session is known to be local. Stop requests an

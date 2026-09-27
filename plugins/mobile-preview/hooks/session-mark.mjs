@@ -240,3 +240,37 @@ export function confirmReason(sessionId, lead) {
 export function isRemoteNow(mark, env = process.env) {
   return remoteStatus(mark, env).remote
 }
+
+// ---- choices the user makes once, for every session ----
+//
+// Not per session: "write complex replies as HTML" is how this person wants
+// to read, not something about one task, and a switch they have to flip
+// again in every new session is a switch they stop using.
+
+function settingsPath(env) {
+  return join(stateDir(env), 'settings.json')
+}
+
+export function readSettings(env = process.env) {
+  try {
+    const value = JSON.parse(readFileSync(settingsPath(env), 'utf8'))
+    return value && typeof value === 'object' ? value : {}
+  } catch {
+    return {}
+  }
+}
+
+export function writeSettings(patch, env = process.env) {
+  const next = { ...readSettings(env), ...patch }
+  try {
+    mkdirSync(stateDir(env), { recursive: true })
+    writeFileSync(settingsPath(env), JSON.stringify(next), 'utf8')
+  } catch {
+    return null
+  }
+  return next
+}
+
+export function htmlRepliesOn(env = process.env) {
+  return readSettings(env).htmlReplies === true
+}

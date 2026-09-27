@@ -30,8 +30,9 @@ Global: `-h, --help` shows help, `mp <command> --help` shows one command's optio
 | `mp stop` | Tear a preview down and leave nothing running | `--port` `--all` |
 | `mp doctor` | Check everything mp needs is installed, on PATH and reachable | none |
 | `mp remote on/off/status` | Remember the user's remote or local choice for this Codex session | `--session` |
+| `mp html on/off/status` | Write long, structured replies as an HTML page (all sessions on this machine) | none |
 | `mp secret ask/wait/run/render/peek/saved/status/forget` | The phone fills in credentials the AI may use but never read; they can be saved encrypted on this computer | `--field` `--use` `--render` `--id` |
-| `mp interaction ask/wait/status/close` | Put a decision on a page, get the answer as JSON | `--html` `--id` `--timeout` |
+| `mp interaction ask/wait/status/close` | Put a decision on a page, get the answer as JSON | `--html` `--local` `--id` `--timeout` |
 
 ## mp start
 
@@ -79,6 +80,21 @@ link that works from another device. The confirmation is asked at most twice
 per session. User messages refresh the choice; it
 expires after 30 days of inactivity.
 
+## mp html
+
+| Subcommand | Flag | Default | Meaning |
+|---|---|---|---|
+| `html on` | none | off | From now on a long reply with tables or several sections is written as one self-contained HTML file; the chat gets two or three lines and the link |
+| `html off` | none | | Replies stay in the chat |
+| `html status` | none | | Show the switch |
+
+The switch applies to every session on this machine and lives in
+`%LOCALAPPDATA%\mobile-preview\settings.json`. While it is on, new sessions are told
+the rule up front, and the `Stop` hook sends back a long structured reply written in
+the chat anyway. At the computer the page is shown the host's own way or as a file
+path; when the user may be elsewhere it goes out through `mp start --serve`. Short
+answers, code to copy and logs are unaffected.
+
 ## mp secret
 
 By default values exist only in each daemon's memory. Tick "remember" on the phone and they are
@@ -115,6 +131,7 @@ saved encrypted on this computer, then used at the level you picked (auto / one 
 | | `--id <id>` | none | Replace an open question's page, bumping its revision |
 | | `--ttl <min>` | 120 | Minutes the answer stays readable, 1 to 1440 |
 | | `--form-ttl <min>` | 30 | Minutes the link stays open, 1 to 60 |
+| | `--local` | off | The user is at this computer: serve the page on 127.0.0.1 only, no tunnel, and print just that link |
 | `interaction wait` | `--timeout <sec>` | 540 | On timeout it reports "still waiting" and exits 0; the link stays open |
 | `interaction close` | `--all` | off | Close every question, including stale ones |
 

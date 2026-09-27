@@ -1,6 +1,6 @@
 ---
 name: mobile-preview
-description: 'Use whenever a locally running app has to be opened, shown, verified or screenshotted by someone who is not at this machine — every time a localhost or 127.0.0.1 URL would otherwise be handed to the user, and in any remote session (Happy, phone) where such an address cannot be opened at all. Triggers on "on my phone", "手机上看看", "看看效果", "preview", "预览一下", "send me the link", "把链接发我", "screenshot", "截图", "mobile UI", "localhost 打不开", "这个地址打不开", "stop the preview", "关掉预览", and on mp start / mp capture / mp stop. Also use whenever such a session needs a credential from the user — a password, API key, AccessKey, token, database URL: "密码给你", "把 key 发你", "需要账号密码", "填一下配置", "credentials", "API key" — so it is collected with mp secret instead of typed into the chat. Also use whenever a decision belongs to the user and would otherwise be written out as a wall of text: three or more options to compare, several values to set, items to put in order, a draft to review — "你来定", "帮我选", "哪个好", "排个序", "看看这段改得对不对", "which one", "help me decide", "review this" — so it is asked with mp interaction as a page instead.'
+description: 'Use whenever a locally running app has to be opened, shown, verified or screenshotted by someone who is not at this machine — every time a localhost or 127.0.0.1 URL would otherwise be handed to the user, and in any remote session (Happy, phone) where such an address cannot be opened at all. Triggers on "on my phone", "手机上看看", "看看效果", "preview", "预览一下", "send me the link", "把链接发我", "screenshot", "截图", "mobile UI", "localhost 打不开", "这个地址打不开", "stop the preview", "关掉预览", and on mp start / mp capture / mp stop. Also use whenever such a session needs a credential from the user — a password, API key, AccessKey, token, database URL: "密码给你", "把 key 发你", "需要账号密码", "填一下配置", "credentials", "API key" — so it is collected with mp secret instead of typed into the chat. Also use whenever a decision belongs to the user and would otherwise be written out as a wall of text: three or more options to compare, several values to set, items to put in order, a draft to review — "你来定", "帮我选", "哪个好", "排个序", "看看这段改得对不对", "which one", "help me decide", "review this" — so it is asked with mp interaction as a page instead — at this computer too, with --local. Also use when the user wants long or complex replies as an HTML page rather than chat text: "用网页输出", "复杂回复用 HTML", "以后长回答出网页", "html replies" — that is the mp html on switch.'
 ---
 
 # Mobile Preview
@@ -267,10 +267,18 @@ user limits what any mistake can cost, and this workflow does not change that.
 
 When the answer you need is a **choice among three or more options, two or more
 values, an ordering, or a review of more than a screen of content**, do not
-write it out in the chat. On a phone that is a wall of text the user has to
-read, hold in their head, and answer by typing — and what comes back is prose
-you then have to interpret. Put it on a page instead. A single yes/no, or one
-field, stays in the chat; this is a help, not a toll gate on every question.
+write it out in the chat. That is a wall of text the user has to read, hold in
+their head, and answer by typing — and what comes back is prose you then have
+to interpret. Put it on a page instead: it draws the comparison, and the answer
+comes back as JSON. A single yes/no, or one field, stays in the chat; this is a
+help, not a toll gate on every question.
+
+This holds at the desk as much as on a phone. When the session is known to be
+at this computer (the desktop app says the latest message came from the desk,
+or the user answered 本机), add `--local`: the page is served on 127.0.0.1 only,
+no tunnel, and `ask` prints just that one link. Hand it over and open it in
+your browser pane if you have one. When you do not know where the user is,
+leave `--local` off — the tunnel link works on both.
 
 ```powershell
 mp.cmd interaction ask --purpose "本周四件事的顺序" --html .\decide.html
@@ -287,8 +295,8 @@ file some other way — a static server, `file://`, a browser-pane launch config
 not even to check the layout: it renders perfectly and every button on it is
 dead, and a user sitting at this machine will answer there and wait for nothing.
 Run `ask` first, then use the second link it prints, `http://127.0.0.1:…` (the
-same page without the tunnel), for your own look and for a browser pane the
-user can see. That one works only on this machine; the phone gets the first.
+same page without the tunnel; with `--local`, the only one), for your own look
+and for a browser pane the user can see. That one works only on this machine; the phone gets the first.
 
 If you cannot make the page — no shell, no way to write a file, `mp` missing —
 say so in one line and stop looking for a way round it. Then answer in the chat
@@ -406,18 +414,47 @@ yourself is cheaper than all of them:
 - The `SessionStart` context states the rule above in a remote session.
 - A `PreToolUse` hook refuses a question tool call carrying three explained
   options, or two substantial questions, or one long one, and tells you to use
-  a page in a known remote session. If the mode is unknown, it asks for the
-  confirmation first — at most twice per session across both hooks, then it
-  stops asking.
+  a page in a known remote session. In a known local session the bar is
+  higher — options that each carry a paragraph, or a question that is a short
+  essay — and it asks for an `--local` page. If the mode is unknown, it asks
+  for the confirmation first — at most twice per session across both hooks,
+  then it stops asking.
 - A `Stop` hook catches a long message that ends in a question when no page is
-  open, and asks for one after confirming an unknown mode. It gives up after
-  twice in a session — if the message
+  open, and asks for one after confirming an unknown mode — an `--local` one
+  when the session is known to be local. It gives up after twice in a
+  session — if the message
   really is not a decision for the user, say so in one line and stop. The same
   hook sends back any reply that hands over localhost as the only preview link,
   unless the session is known to be local.
 - The last two treat a session as remote when it started through Happy, or when
   the latest message came from the Claude phone app, or after a user-confirmed
   `mp remote on`.
+
+## HTML replies (`mp html on`)
+
+A switch the user flips, for every session on this machine: `mp html on`,
+`mp html off`, `mp html status`. Off by default. Run it when they ask for it —
+"复杂的回复用网页给我", "以后长回答都出 HTML" — and never on your own.
+
+While it is on, a reply that would run to many screens, or carry tables,
+several sections or a comparison, is written as one self-contained HTML file
+instead (inline CSS, no external resources, in the system temp directory).
+Draw what can be drawn — tables as tables, trade-offs as bars or side-by-side
+cards, flows as boxes and arrows — and fold detail into `<details>`. Then:
+
+- At this computer: show it with the host's own way of rendering an HTML file
+  if it has one (a send-file tool with a render display), otherwise give its
+  absolute path as a link.
+- Possibly elsewhere: `mp start --serve <dir>` and hand over the preview URL
+  as a bare line.
+
+End the turn with two or three lines and the link, not the full reply again.
+Short answers, code the user will copy, and logs stay in the chat. A decision
+the user has to make is still an `mp interaction ask` page, not a report.
+
+The SessionStart hook says this at the top of every session while the switch
+is on; the Stop hook sends back a long structured reply written in the chat
+anyway. If it is not worth a page, say so in one line and stop.
 
 ## Safety
 

@@ -7,14 +7,14 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
-import { REMOTE_CONTEXT } from '../plugins/mobile-preview/hooks/session-start.mjs'
+import { HTML_CONTEXT, REMOTE_CONTEXT } from '../plugins/mobile-preview/hooks/session-start.mjs'
 import { decide as askDecide, shapeOf } from '../plugins/mobile-preview/hooks/ask-question.mjs'
 import {
-  decide as stopDecide, handsOverLocalAddress, looksLikeAnUnansweredDecision,
+  decide as stopDecide, handsOverLocalAddress, looksLikeAComplexReply, looksLikeAnUnansweredDecision,
 } from '../plugins/mobile-preview/hooks/stop.mjs'
 import {
-  desktopSessionFile, hasOpenInteraction, isRemoteNow, pruneMarks, readMark, remoteStatus, sessionsDir,
-  steeredFromPhone, writeMark,
+  desktopSessionFile, hasOpenInteraction, htmlRepliesOn, isRemoteNow, pruneMarks, readMark, remoteStatus,
+  sessionsDir, steeredFromPhone, writeMark, writeSettings,
 } from '../plugins/mobile-preview/hooks/session-mark.mjs'
 import { readPayload } from '../plugins/mobile-preview/hooks/hook-io.mjs'
 import { confirmedRemoteAnswer } from '../plugins/mobile-preview/hooks/manual-confirm.mjs'
@@ -463,7 +463,8 @@ test('未确认设备时，长篇决策只要求一次人工确认', () => {
   assert.equal(readMark('s-confirm', env).awaitingManualRemote, true)
 
   writeMark('s-confirm', { manualRemote: false }, env)
-  assert.equal(runHook('stop.mjs', { session_id: 's-confirm', last_assistant_message: LONG }, env).stdout.trim(), '')
+  const local = runHook('stop.mjs', { session_id: 's-confirm', last_assistant_message: LONG }, env)
+  assert.match(JSON.parse(local.stdout).reason, /mp interaction ask --local/, '确认本机后不再问设备，改开本机页面')
 })
 
 test('stop_hook_active 时立刻让路，绝不和自己较劲', () => {
@@ -546,10 +547,12 @@ test('桌面会话从手机发来时，Stop 和提问两道都按远程处理—
   assert.equal(JSON.parse(ask.stdout).hookSpecificOutput.permissionDecision, 'deny')
 })
 
-test('同一个桌面会话回到电脑上发，两道都不再管', () => {
+test('同一个桌面会话回到电脑上发：长篇决策改开本机页面，普通大小的提问留给自带选择器', () => {
   const env = desktopEnv({ steeredByRemoteClient: false })
   writeMark('s-desk2', { remote: false, blocks: 0 }, env)
-  assert.equal(runHook('stop.mjs', { session_id: 's-desk2', last_assistant_message: LONG }, env).stdout.trim(), '')
+  const stop = JSON.parse(runHook('stop.mjs', { session_id: 's-desk2', last_assistant_message: LONG }, env).stdout)
+  assert.match(stop.reason, /mp interaction ask --local/)
+  assert.doesNotMatch(stop.reason, /phone/, '人在电脑前，不能叫他去手机上看')
   assert.equal(runHook('ask-question.mjs', { session_id: 's-desk2', ...bigChoice }, env).stdout.trim(), '')
 })
 
@@ -747,4 +750,110 @@ test('设备确认最多问两次，之后不再问；兜底命令带上会话 i
   assert.equal(runHook('ask-question.mjs', input, env).stdout.trim(), '')
   assert.equal(runHook('stop.mjs', { session_id: 's-ask', last_assistant_message: LONG }, env).stdout.trim(), '')
   assert.deepEqual(remoteStatus(readMark('s-ask', env), env), { remote: false, confirmed: true, local: false })
+})
+
+// ---- 本机也开页面（0.6.0） ----
+//
+// 2026-09-27：在电脑前用，几千字的方案对比照样糊在聊天里——三道触发只要确认是
+// 本机就一概放行。页面画得出对比、答案回来是 JSON，这两样在显示器上一样有用。
+
+test('本机的长篇决策也拦，但给的是不开隧道的 --local 页面', () => {
+  const v = stopDecide({ last_assistant_message: LONG }, { local: true })
+  assert.equal(v.kind, 'decision')
+  assert.match(v.block, /mp interaction ask --local/)
+  assert.match(v.block, /If this really is not a decision/)
+  assert.equal(stopDecide({ last_assistant_message: LONG }, { local: true, blocks: 2 }), null, '两次的上限本机也算')
+  assert.equal(stopDecide({ last_assistant_message: LONG }, { local: true, pageOpen: true }), null)
+})
+
+test('设备不明且已放弃确认的，仍然不拦——既不知道在哪，就不替人开页面', () => {
+  assert.equal(stopDecide({ last_assistant_message: LONG }, { remote: false, confirmed: true, local: false }), null)
+})
+
+const essayChoice = {
+  tool_name: 'AskUserQuestion',
+  tool_input: {
+    questions: [{
+      header: '方案',
+      question: '迁移怎么做？',
+      options: ['a', 'b', 'c'].map((label) => ({
+        label,
+        description: '这一条要讲清楚它改了哪些表、回滚要多久、对线上读写有什么影响，以及它和另外两条方案在成本上的差别。'.repeat(2),
+      })),
+    }],
+  },
+}
+
+test('本机的提问门槛更高：三个带段落说明的选项才拦，一句话说明的留给自带选择器', () => {
+  assert.equal(askDecide(bigChoice, { local: true }), null)
+  const v = askDecide(essayChoice, { local: true })
+  assert.ok(v)
+  assert.match(v.deny, /mp interaction ask --local/)
+  assert.equal(askDecide(essayChoice, { remote: false, confirmed: true }), null, '不是明确本机就不动')
+})
+
+// ---- mp html on：复杂回复写成页面 ----
+
+const REPORT = `## 背景
+${'这次排查从日志开始，逐层往下看。'.repeat(40)}
+## 对比
+| 方案 | 成本 | 风险 |
+|---|---|---|
+| A | 低 | 中 |
+| B | 高 | 低 |
+## 结论
+${'所以最后改的是配置，而不是代码。'.repeat(20)}`
+
+test('复杂回复的判断：够长且有表格或多个小节；纯长文要再长得多', () => {
+  assert.equal(looksLikeAComplexReply(REPORT), true)
+  assert.equal(looksLikeAComplexReply('## a\n## b\n## c\n短。'), false, '短的不算，哪怕有小节')
+  assert.equal(looksLikeAComplexReply('说明。'.repeat(500)), false, '没结构、不算特别长的不算')
+  assert.equal(looksLikeAComplexReply('说明。'.repeat(1100)), true, '特别长的不看结构')
+})
+
+test('开关关着时复杂回复不拦；开着时本机给文件、远端给 mp start --serve', () => {
+  assert.equal(stopDecide({ last_assistant_message: REPORT }, { local: true }), null)
+  const local = stopDecide({ last_assistant_message: REPORT }, { local: true, html: true })
+  assert.equal(local.kind, 'report')
+  assert.match(local.block, /mp html on/)
+  assert.doesNotMatch(local.block, /mp start --serve/)
+  assert.match(local.block, /not worth a page/, '给一条退出的路')
+  const remote = stopDecide({ last_assistant_message: REPORT }, { remote: true, html: true })
+  assert.match(remote.block, /mp start --serve/)
+  assert.equal(stopDecide({ last_assistant_message: REPORT, stop_hook_active: true }, { local: true, html: true }), null)
+  assert.equal(stopDecide({ last_assistant_message: '改好了。' }, { local: true, html: true }), null)
+})
+
+test('开关存在状态目录里，Stop 进程读得到，且不占决策的两次额度', () => {
+  const env = tempEnv()
+  writeMark('s-html', { manualRemote: false, blocks: 2 }, env)
+  assert.equal(runHook('stop.mjs', { session_id: 's-html', last_assistant_message: REPORT }, env).stdout.trim(), '')
+  writeSettings({ htmlReplies: true }, env)
+  assert.equal(htmlRepliesOn(env), true)
+  const res = runHook('stop.mjs', { session_id: 's-html', last_assistant_message: REPORT }, env)
+  assert.equal(JSON.parse(res.stdout).decision, 'block')
+  assert.equal(readMark('s-html', env).blocks, 2)
+})
+
+test('mp html on/off/status 写的就是 hook 读的那个开关', () => {
+  const env = { ...tempEnv(), PATH: process.env.PATH }
+  const mp = (...args) => spawnSync(process.execPath, [join(ROOT, 'src', 'bin.js'), 'html', ...args], { env, encoding: 'utf8' })
+  assert.equal(mp('on').status, 0)
+  assert.equal(htmlRepliesOn(env), true)
+  assert.match(mp('status').stderr + mp('status').stdout, /html replies on/)
+  mp('off')
+  assert.equal(htmlRepliesOn(env), false)
+})
+
+test('开关打开时 SessionStart 在本地会话里也注入 HTML 规则；关着时本地会话仍一声不吭', () => {
+  const env = tempEnv()
+  assert.equal(runHook('session-start.mjs', { session_id: 's-ss' }, env).stdout.trim(), '')
+  writeSettings({ htmlReplies: true }, env)
+  const ctx = JSON.parse(runHook('session-start.mjs', { session_id: 's-ss' }, env).stdout).hookSpecificOutput.additionalContext
+  assert.equal(ctx, HTML_CONTEXT)
+  assert.match(HTML_CONTEXT, /--local/)
+  for (const [, name] of HTML_CONTEXT.matchAll(/`mp(?:\.cmd)? ([a-z]+(?: [a-z]+)?)/g)) {
+    const known = COMMANDS[name] || COMMANDS[name.split(' ')[0]] || commandGroup(name.split(' ')[0]).length
+    assert.ok(known, `hook 教了 mp ${name}，但 CLI 没有这个子命令`)
+  }
 })

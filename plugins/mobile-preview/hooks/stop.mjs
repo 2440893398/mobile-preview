@@ -40,6 +40,11 @@ const MAX_BLOCKS = 2
 // at the start of a line, which is how options get written out in prose.
 const ENUMERATED = /^[ \t]*(?:[-*•]|\(?[0-9a-dA-D][.)、）])\s+\S/m
 const ASKS = /[?？]/
+const ENUMERATED_ALL = new RegExp(ENUMERATED.source, 'gm')
+// A question that asks the user to pick among things. Without one of these, a
+// lone question at the end is a go-ahead — "要开始吗？", "shall I proceed?",
+// "先写方案还是直接改？" — and a page with one button is slower than typing "好".
+const CHOOSES = /哪|选|排序|排个|优先|倾向|偏好|\bwhich\b|\bprefer|\brank|\bchoose|\bpick\b/i
 
 const REASON = 'That message asks the user to decide, and it is long enough that reading it on a phone '
   + 'and typing an answer back is the slow way round. Turn it into a page: write one self-contained '
@@ -77,13 +82,14 @@ const LOCAL_REASON = 'That message offers a localhost / 127.0.0.1 page for the u
 // monitor than on a phone — the page is what draws the comparison and turns
 // the answer into JSON — so a known-local session gets it too, just without
 // the tunnel, which there is only a slower way to reach a port they can open.
-const LOCAL_DECISION_REASON = 'That message asks the user to decide, and it is long enough that weighing it '
-  + 'in the chat is the slow way round. The user is at this computer, so put it on a local page: write one '
-  + 'self-contained HTML file with the choices as controls, run '
-  + '`mp interaction ask --local --purpose "<why>" --html <file>`, hand over the 127.0.0.1 link it prints '
-  + '(and open it in your browser pane if you have one), then `mp interaction wait --id <id>` and act on the '
-  + 'JSON it prints. See the mobile-preview skill for what the page must contain. '
-  + 'If this really is not a decision for them to make, say so in one line and stop.'
+//
+// But at the desk it is only a hint to the user, never a block. A block
+// re-runs the model and prints a "Hook re-prompted" panel; when the shape was
+// misread — a plan ending in "要开始吗？" — that is a wasted turn and a wall of
+// hook text, for a reader who could have scrolled up anyway. So the user sees
+// one line and decides; asking for the page is one word.
+const LOCAL_DECISION_HINT = 'mobile-preview：上面这条像是要你在几个选项里挑。想在页面上选，回复「做成页面」即可。'
+  + ' / This looks like a choice for you — reply "make it a page" to get one.'
 
 const CONFIRM_LEAD = 'This reply ends with a substantial decision for the user.'
 
@@ -170,7 +176,19 @@ export function looksLikeAnUnansweredDecision(message) {
   const text = String(message ?? '')
   if (weigh(text) <= LONG_MESSAGE) return false
   const tail = text.slice(-TAIL)
-  return ASKS.test(tail) || ENUMERATED.test(tail)
+  // A list with no question: the options are the ending.
+  // Options are counted, not spotted: one bullet is a note, two are a choice.
+  const options = (part) => (part.match(ENUMERATED_ALL) || []).length
+  if (!ASKS.test(tail)) return options(tail) >= 2
+  const last = Math.max(tail.lastIndexOf('?'), tail.lastIndexOf('？'))
+  // Options written out after the question.
+  if (options(tail.slice(last + 1)) >= 2) return true
+  // A numbered list of questions: several decisions, not one.
+  const asked = tail.split(/\r?\n/).filter((line) => ENUMERATED.test(line) && ASKS.test(line)).length
+  if (asked >= 2) return true
+  // One question at the end: only a choice is worth a page, not a go-ahead.
+  const sentence = tail.slice(0, last).split(/[。！!？?\n]|\.\s/).pop()
+  return CHOOSES.test(sentence)
 }
 
 export function decide(payload, {
@@ -194,7 +212,7 @@ export function decide(payload, {
     if (blocks >= MAX_BLOCKS) return null
     if (!confirmed) return { block: confirmReason(payload?.session_id, CONFIRM_LEAD), kind: 'confirm' }
     if (remote) return { block: REASON, kind: 'decision' }
-    if (local) return { block: LOCAL_DECISION_REASON, kind: 'decision' }
+    if (local) return { hint: LOCAL_DECISION_HINT, kind: 'hint' }
     return null
   }
   // Not budgeted like a decision: the user asked for this, and
@@ -218,9 +236,13 @@ async function main() {
   })
   if (!verdict) return
 
-  if (verdict.kind === 'decision') writeMark(payload.session_id, { blocks: Number(mark?.blocks ?? 0) + 1 })
+  // A hint shares the budget: ignored twice, it has said what it had to say.
+  if (verdict.kind === 'decision' || verdict.kind === 'hint') {
+    writeMark(payload.session_id, { blocks: Number(mark?.blocks ?? 0) + 1 })
+  }
   if (verdict.kind === 'confirm') recordConfirmAsk(payload.session_id, mark)
-  process.stdout.write(`${JSON.stringify({ decision: 'block', reason: verdict.block })}\n`)
+  const output = verdict.hint ? { systemMessage: verdict.hint } : { decision: 'block', reason: verdict.block }
+  process.stdout.write(`${JSON.stringify(output)}\n`)
 }
 
 if (process.argv[1] && pathToFileURL(process.argv[1]).href === import.meta.url) {

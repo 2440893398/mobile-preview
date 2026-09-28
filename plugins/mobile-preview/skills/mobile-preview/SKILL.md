@@ -1,6 +1,6 @@
 ---
 name: mobile-preview
-description: 'Use whenever a locally running app has to be opened, shown, verified or screenshotted by someone who is not at this machine — every time a localhost or 127.0.0.1 URL would otherwise be handed to the user, and in any remote session (Happy, phone) where such an address cannot be opened at all. Triggers on "on my phone", "手机上看看", "看看效果", "preview", "预览一下", "send me the link", "把链接发我", "screenshot", "截图", "mobile UI", "localhost 打不开", "这个地址打不开", "stop the preview", "关掉预览", and on mp start / mp capture / mp stop. Also use whenever such a session needs a credential from the user — a password, API key, AccessKey, token, database URL: "密码给你", "把 key 发你", "需要账号密码", "填一下配置", "credentials", "API key" — so it is collected with mp secret instead of typed into the chat. Also use whenever a decision belongs to the user and would otherwise be written out as a wall of text: three or more options to compare, several values to set, items to put in order, a draft to review — "你来定", "帮我选", "哪个好", "排个序", "看看这段改得对不对", "which one", "help me decide", "review this" — so it is asked with mp interaction as a page instead — at this computer too, with --local. Also use when the user wants long or complex replies as an HTML page rather than chat text: "用网页输出", "复杂回复用 HTML", "以后长回答出网页", "html replies" — that is the mp html on switch.'
+description: 'Use whenever a locally running app has to be opened, shown, verified or screenshotted by someone who is not at this machine — every time a localhost or 127.0.0.1 URL would otherwise be handed to the user, and in any remote session (Happy, phone) where such an address cannot be opened at all. Triggers on "on my phone", "手机上看看", "看看效果", "preview", "预览一下", "send me the link", "把链接发我", "screenshot", "截图", "mobile UI", "localhost 打不开", "这个地址打不开", "stop the preview", "关掉预览", and on mp start / mp capture / mp stop. Also use whenever such a session needs a credential from the user — a password, API key, AccessKey, token, database URL: "密码给你", "把 key 发你", "需要账号密码", "填一下配置", "credentials", "API key" — so it is collected with mp secret instead of typed into the chat. Also use whenever a decision belongs to the user and would otherwise be written out as a wall of text: three or more options to compare, several values to set, items to put in order, a draft to review — "你来定", "帮我选", "哪个好", "排个序", "看看这段改得对不对", "which one", "help me decide", "review this", "做成页面", "make it a page" — so it is asked with mp interaction as a page instead — at this computer too, with --local. Also use when the user wants long or complex replies as an HTML page rather than chat text: "用网页输出", "复杂回复用 HTML", "以后长回答出网页", "html replies" — that is the mp html on switch.'
 ---
 
 # Mobile Preview
@@ -419,10 +419,13 @@ yourself is cheaper than all of them:
   essay — and it asks for an `--local` page. If the mode is unknown, it asks
   for the confirmation first — at most twice per session across both hooks,
   then it stops asking.
-- A `Stop` hook catches a long message that ends in a question when no page is
-  open, and asks for one after confirming an unknown mode — an `--local` one
-  when the session is known to be local. It gives up after twice in a
-  session — if the message
+- A `Stop` hook catches a long message that ends in a choice — options after
+  the question, a numbered list of questions, or a "which / 哪个" question —
+  when no page is open (a lone go-ahead like "要开始吗？" does not count),
+  and asks for one after confirming an unknown mode. When the session is known
+  to be local it does not block: it shows the user one line, and if they reply
+  「做成页面」 / "make it a page", put your last choice on an `--local` page.
+  It gives up after twice in a session — if the message
   really is not a decision for the user, say so in one line and stop. The same
   hook sends back any reply that hands over localhost as the only preview link,
   unless the session is known to be local.

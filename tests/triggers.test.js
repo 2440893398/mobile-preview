@@ -444,6 +444,24 @@ test('结尾是列表而不是问号的，也算在问', () => {
   assert.equal(looksLikeAnUnansweredDecision(enumerated), true)
 })
 
+test('长篇方案末尾只问一句「开始吗」不拦——一个按钮的页面比打个「好」还慢', () => {
+  const plan = `${'这是实施方案的一步说明。'.repeat(120)}
+1. 先改 stop.mjs
+2. 再补测试
+方案就这样，要我写好计划直接开始吗？`
+  assert.equal(looksLikeAnUnansweredDecision(plan), false)
+  assert.equal(looksLikeAnUnansweredDecision(`${'Plan step. '.repeat(200)}\n- edit\n- test\nShall I go ahead?`), false)
+  assert.equal(looksLikeAnUnansweredDecision(`${'说明。'.repeat(600)}先写方案还是直接改？`), false, '二选一的放行也不值一页')
+  assert.equal(stopDecide({ last_assistant_message: plan }, { remote: true }), null)
+
+  // 真正的选择照拦：列出来的一串问题，或者问的是「哪个」。
+  const several = `${'说明。'.repeat(600)}
+1. 表名要改成复数吗？
+2. 旧字段保留吗？`
+  assert.equal(looksLikeAnUnansweredDecision(several), true)
+  assert.equal(looksLikeAnUnansweredDecision(`${'说明。'.repeat(600)}上面三个方案你选哪个？`), true)
+})
+
 test('页面已经开着时不拦——那条消息是在介绍页面，不是在代替页面', () => {
   assert.equal(stopDecide({ last_assistant_message: LONG }, { remote: true, pageOpen: true }), null)
 })
@@ -464,7 +482,7 @@ test('未确认设备时，长篇决策只要求一次人工确认', () => {
 
   writeMark('s-confirm', { manualRemote: false }, env)
   const local = runHook('stop.mjs', { session_id: 's-confirm', last_assistant_message: LONG }, env)
-  assert.match(JSON.parse(local.stdout).reason, /mp interaction ask --local/, '确认本机后不再问设备，改开本机页面')
+  assert.match(JSON.parse(local.stdout).systemMessage, /做成页面/, '确认本机后不再问设备，只提示可以开本机页面')
 })
 
 test('stop_hook_active 时立刻让路，绝不和自己较劲', () => {
@@ -547,12 +565,12 @@ test('桌面会话从手机发来时，Stop 和提问两道都按远程处理—
   assert.equal(JSON.parse(ask.stdout).hookSpecificOutput.permissionDecision, 'deny')
 })
 
-test('同一个桌面会话回到电脑上发：长篇决策改开本机页面，普通大小的提问留给自带选择器', () => {
+test('同一个桌面会话回到电脑上发：长篇决策只提示本机页面，普通大小的提问留给自带选择器', () => {
   const env = desktopEnv({ steeredByRemoteClient: false })
   writeMark('s-desk2', { remote: false, blocks: 0 }, env)
   const stop = JSON.parse(runHook('stop.mjs', { session_id: 's-desk2', last_assistant_message: LONG }, env).stdout)
-  assert.match(stop.reason, /mp interaction ask --local/)
-  assert.doesNotMatch(stop.reason, /phone/, '人在电脑前，不能叫他去手机上看')
+  assert.equal(stop.decision, undefined, '人在电脑前，不拦')
+  assert.match(stop.systemMessage, /做成页面/)
   assert.equal(runHook('ask-question.mjs', { session_id: 's-desk2', ...bigChoice }, env).stdout.trim(), '')
 })
 
@@ -757,13 +775,34 @@ test('设备确认最多问两次，之后不再问；兜底命令带上会话 i
 // 2026-09-27：在电脑前用，几千字的方案对比照样糊在聊天里——三道触发只要确认是
 // 本机就一概放行。页面画得出对比、答案回来是 JSON，这两样在显示器上一样有用。
 
-test('本机的长篇决策也拦，但给的是不开隧道的 --local 页面', () => {
+// 2026-09-28：本机拦下来要重跑一轮、再糊一段 hook 文字；看错了形状（方案末尾一句
+// 「要开始吗？」）就是白跑。人就在电脑前，给一行提示，开不开页面由人定。
+test('本机的长篇决策不拦，只给用户一行提示', () => {
   const v = stopDecide({ last_assistant_message: LONG }, { local: true })
-  assert.equal(v.kind, 'decision')
-  assert.match(v.block, /mp interaction ask --local/)
-  assert.match(v.block, /If this really is not a decision/)
+  assert.equal(v.kind, 'hint')
+  assert.equal(v.block, undefined, '本机不能 block，否则又是重跑一轮')
+  assert.match(v.hint, /做成页面/)
   assert.equal(stopDecide({ last_assistant_message: LONG }, { local: true, blocks: 2 }), null, '两次的上限本机也算')
   assert.equal(stopDecide({ last_assistant_message: LONG }, { local: true, pageOpen: true }), null)
+})
+
+test('本机提示走 systemMessage，不带 decision，并计入两次上限', () => {
+  const env = tempEnv()
+  writeMark('s-hint', { manualRemote: false }, env)
+  const first = runHook('stop.mjs', { session_id: 's-hint', last_assistant_message: LONG }, env)
+  assert.equal(first.status, 0, first.stderr)
+  const out = JSON.parse(first.stdout)
+  assert.equal(out.decision, undefined)
+  assert.match(out.systemMessage, /做成页面/)
+  runHook('stop.mjs', { session_id: 's-hint', last_assistant_message: LONG }, env)
+  assert.equal(runHook('stop.mjs', { session_id: 's-hint', last_assistant_message: LONG }, env).stdout.trim(), '')
+})
+
+test('结尾只有一条列表项不算选项——一条是备注，两条才是选择', () => {
+  assert.equal(looksLikeAnUnansweredDecision(`${'说明。'.repeat(600)}
+- 注意：迁移前先备份`), false)
+  assert.equal(looksLikeAnUnansweredDecision(`${'说明。'.repeat(600)}要怎么处理？
+- 删掉`), false)
 })
 
 test('设备不明且已放弃确认的，仍然不拦——既不知道在哪，就不替人开页面', () => {
